@@ -1,6 +1,6 @@
 from pyrogram import Client
 from config import *
-from handlers import tagging, stop_resume, start, broadcast, collect
+from handlers import tagging, stop_resume, start, broadcast, collect, stats
 
 app = Client(
     "tagbot",
@@ -14,5 +14,6 @@ broadcast.register(app)
 collect.register(app)
 tagging.register(app)
 stop_resume.register(app)
+stats.register(app)
 
 app.run()
