@@ -1,0 +1,10 @@
+{
+  "name": "Advanced Telegram Tag Bot",
+  "env": {
+    "API_ID": {},
+    "API_HASH": {},
+    "BOT_TOKEN": {},
+    "MONGO_URI": {},
+    "OWNER_ID": {}
+  }
+}
