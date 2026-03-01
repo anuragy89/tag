@@ -1,21 +1,25 @@
 from pyrogram import filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from utils.database import add_user
+from config import UPDATE_CHANNEL, BOT_USERNAME
 
-def register(app):
+def start_handler(app):
 
-    @app.on_message(filters.command("start") & filters.private)
-    async def start(_, m):
+    @app.on_message(filters.private & filters.command("start"))
+    async def start_cmd(client, message):
+        user = message.from_user
+        await add_user(user.id)
+
         text = (
             "👋 **Hey Welcome!**\n\n"
-            "🤖 I’m a *Smart Tagging Bot*\n"
-            "✨ Human-like tags\n"
-            "🔥 Hindi | English | Hinglish\n\n"
-            "➕ Add me to your group & enjoy 😄"
+            "🤖 I am a **Smart Tagging Bot**\n"
+            "🔥 I can tag members & admins in cool styles\n\n"
+            "👇 Use buttons below to get started"
         )
 
         buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ Add Me", url="https://t.me/YourBotUsername?startgroup=true")],
-            [InlineKeyboardButton("📢 Updates", url="https://t.me/YourChannel")]
+            [InlineKeyboardButton("➕ Add Me To Group", url=f"https://t.me/{BOT_USERNAME}?startgroup=true")],
+            [InlineKeyboardButton("📢 Updates Channel", url=UPDATE_CHANNEL)]
         ])
 
-        await m.reply(text, reply_markup=buttons)
+        await message.reply_text(text, reply_markup=buttons)
