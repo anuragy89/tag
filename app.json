@@ -1,10 +1,38 @@
 {
   "name": "Advanced Telegram Tag Bot",
+  "description": "Multi-mode Telegram tagging bot with admin-only control, broadcast, and auto-delete",
+  "stack": "heroku-22",
   "env": {
-    "API_ID": {},
-    "API_HASH": {},
-    "BOT_TOKEN": {},
-    "MONGO_URI": {},
-    "OWNER_ID": {}
+    "API_ID": {
+      "description": "Telegram API ID",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Telegram API HASH",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Telegram Bot Token",
+      "required": true
+    },
+    "MONGO_URI": {
+      "description": "MongoDB connection string",
+      "required": true
+    },
+    "OWNER_ID": {
+      "description": "Telegram user ID of bot owner",
+      "required": true
+    },
+    "TAG_DELAY": {
+      "description": "Delay between tags (seconds)",
+      "value": "4",
+      "required": false
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    }
   }
 }
