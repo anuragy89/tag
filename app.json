@@ -1,7 +1,8 @@
 {
   "name": "Advanced Telegram Tag Bot",
-  "description": "Multi-mode Telegram tagging bot with admin-only control, broadcast, and auto-delete",
+  "description": "Multi-mode Telegram tagging bot with admin-only control, broadcast, stats, logging and rate-limit protection",
   "stack": "heroku-22",
+
   "env": {
     "API_ID": {
       "description": "Telegram API ID",
@@ -24,15 +25,15 @@
       "required": true
     },
     "TAG_DELAY": {
-      "description": "Delay between tags (seconds)",
+      "description": "Delay between tags in seconds",
       "value": "4",
       "required": false
     }
   },
-  "formation": {
+
+  "process_types": {
     "worker": {
-      "quantity": 1,
-      "size": "basic"
+      "command": "python app.py"
     }
   }
 }
