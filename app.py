@@ -1,9 +1,16 @@
+import logging
 from pyrogram import Client
-from config import *
-from handlers import start, collect, broadcast, tagging, stop_resume, stats
-from utils.logger import setup_logger
+from config import API_ID, API_HASH, BOT_TOKEN
+from handlers.start import start_handler
+from handlers.tag import tag_handler
+from handlers.broadcast import broadcast_handler
 
-logger = setup_logger()
+logging.basicConfig(
+    level=logging.INFO,
+    format='{"time":"%(asctime)s","level":"%(levelname)s","module":"%(name)s","message":"%(message)s"}'
+)
+
+logger = logging.getLogger(__name__)
 logger.info("Bot starting...")
 
 app = Client(
@@ -13,12 +20,9 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-start.register(app)
-collect.register(app)
-broadcast.register(app)
-tagging.register(app)
-stop_resume.register(app)
-stats.register(app)
+# ✅ Correct function calls
+start_handler(app)
+tag_handler(app)
+broadcast_handler(app)
 
-logger.info("Handlers loaded. Bot is running.")
 app.run()
