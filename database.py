@@ -28,7 +28,13 @@ async def add_group(group_id: int):
         {"$set": {"_id": group_id}},
         upsert=True
     )
+# ---------- STATS ----------
+async def count_users():
+    return await users.count_documents({})
 
+async def count_groups():
+    return await groups.count_documents({})
+    
 
 async def get_groups():
     return [g["_id"] async for g in groups.find({})]
