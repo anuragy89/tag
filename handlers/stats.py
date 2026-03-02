@@ -1,19 +1,21 @@
 from pyrogram import filters
-from database import count_users, count_groups
 from config import OWNER_ID
+from database import count_users, count_groups
 
-def register(app):
 
-    @app.on_message(filters.command("stats") & filters.user(OWNER_ID))
-    async def stats(_, m):
-        user_count = await count_users()
-        group_count = await count_groups()
+def stats_handler(app):
 
-        text = (
+    @app.on_message(filters.command("stats"))
+    async def stats_cmd(client, message):
+
+        if message.from_user.id != OWNER_ID:
+            return await message.reply_text("❌ Only owner can view stats.")
+
+        users = await count_users()
+        groups = await count_groups()
+
+        await message.reply_text(
             "📊 **Bot Statistics**\n\n"
-            f"👤 Users started bot: **{user_count}**\n"
-            f"👥 Groups added: **{group_count}**\n\n"
-            "🤖 Status: **Running Smoothly** ✅"
+            f"👤 Users: `{users}`\n"
+            f"👥 Groups: `{groups}`"
         )
-
-        await m.reply(text)
