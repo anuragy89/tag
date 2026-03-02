@@ -1,11 +1,13 @@
 import os
 
+# Telegram credentials
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-MONGO_URI = os.getenv("MONGO_URI")
-OWNER_ID = int(os.getenv("OWNER_ID"))
+# Bot info
+BOT_USERNAME = os.getenv("BOT_USERNAME")  # <-- ADD THIS
+UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL", "https://t.me/your_channel")
 
-TAG_DELAY = int(os.getenv("TAG_DELAY", 4))
-BATCH_SIZE = 7
+# Database
+MONGO_URI = os.getenv("MONGO_URI")
