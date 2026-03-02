@@ -4,11 +4,14 @@ from database import add_user, add_group
 
 def collect_handler(app):
 
+    # collect users who start bot in DM
     @app.on_message(filters.private)
     async def collect_user(client, message):
         if message.from_user:
             add_user(message.from_user.id)
 
-    @app.on_message(filters.group | filters.supergroup)
+    # collect groups where bot is added or used
+    @app.on_message(filters.group)
     async def collect_group(client, message):
-        add_group(message.chat.id)
+        if message.chat:
+            add_group(message.chat.id)
