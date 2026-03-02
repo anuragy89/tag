@@ -1,6 +1,6 @@
 from pyrogram import filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from utils.database import add_user
+from database import add_user
 from config import BOT_USERNAME, UPDATE_CHANNEL
 
 
@@ -12,8 +12,8 @@ def start_handler(app):
 
         text = (
             "👋 **Welcome!**\n\n"
-            "🤖 Smart Tagging Bot\n"
-            "🔥 Tag members & admins easily\n\n"
+            "🤖 Advanced Tagging Bot\n"
+            "🔥 Admin-only smart tagging\n\n"
             "👇 Use buttons below"
         )
 
