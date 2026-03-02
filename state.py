@@ -1,17 +1,15 @@
-# state.py
+# utils/state.py
 
-BOT_RUNNING = True
-
-
-def stop():
-    global BOT_RUNNING
-    BOT_RUNNING = False
+TAG_STATE = {}  # chat_id -> True / False
 
 
-def resume():
-    global BOT_RUNNING
-    BOT_RUNNING = True
+def start_tag(chat_id: int):
+    TAG_STATE[chat_id] = True
 
 
-def is_running():
-    return BOT_RUNNING
+def stop_tag(chat_id: int):
+    TAG_STATE[chat_id] = False
+
+
+def is_running(chat_id: int) -> bool:
+    return TAG_STATE.get(chat_id, False)
