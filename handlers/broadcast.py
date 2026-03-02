@@ -1,29 +1,64 @@
 from pyrogram import filters
-from database import get_users, get_groups
+from pyrogram.errors import FloodWait
+import asyncio
+
 from config import OWNER_ID
+from database import get_users, get_groups
 
-def register(app):
 
-    @app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
-    async def broadcast(_, m):
-        if not m.reply_to_message:
-            await m.reply("Reply to a message to broadcast")
-            return
+def broadcast_handler(app):
 
-        text = m.reply_to_message.text
+    @app.on_message(filters.private & filters.command("broadcast"))
+    async def broadcast_cmd(client, message):
+
+        # owner check
+        if message.from_user.id != OWNER_ID:
+            return await message.reply_text("❌ Only bot owner can use broadcast.")
+
+        if not message.reply_to_message:
+            return await message.reply_text(
+                "⚠️ Reply to a message to broadcast it."
+            )
 
         sent = 0
-        for uid in await get_users():
+        failed = 0
+
+        text = message.reply_to_message
+
+        # -------- USERS --------
+        users = await get_users()
+        for uid in users:
             try:
-                await app.send_message(uid, text)
+                await client.copy_message(
+                    chat_id=uid,
+                    from_chat_id=text.chat.id,
+                    message_id=text.id
+                )
                 sent += 1
-            except:
-                pass
+                await asyncio.sleep(0.5)
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+            except Exception:
+                failed += 1
 
-        for gid in await get_groups():
+        # -------- GROUPS --------
+        groups = await get_groups()
+        for gid in groups:
             try:
-                await app.send_message(gid, text)
-            except:
-                pass
+                await client.copy_message(
+                    chat_id=gid,
+                    from_chat_id=text.chat.id,
+                    message_id=text.id
+                )
+                sent += 1
+                await asyncio.sleep(0.5)
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+            except Exception:
+                failed += 1
 
-        await m.reply(f"✅ Broadcast sent to {sent} users")
+        await message.reply_text(
+            f"✅ Broadcast finished\n\n"
+            f"📤 Sent: {sent}\n"
+            f"❌ Failed: {failed}"
+        )
