@@ -11,8 +11,7 @@ logging.basicConfig(
     format='{"time":"%(asctime)s","level":"%(levelname)s","module":"%(name)s","message":"%(message)s"}'
 )
 
-logger = logging.getLogger(__name__)
-logger.info("Bot starting...")
+logging.info("Bot starting...")
 
 app = Client(
     "tagbot",
@@ -21,7 +20,6 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-# register handlers
 start_handler(app)
 tag_handler(app)
 broadcast_handler(app)
