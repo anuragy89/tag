@@ -49,3 +49,13 @@ async def get_stats():
     users = await users_col.count_documents({})
     groups = await groups_col.count_documents({})
     return users, groups
+# database.py
+
+async def count_users():
+    users = await get_users()
+    return len(users)
+
+
+async def count_groups():
+    groups = await get_groups()
+    return len(groups)
