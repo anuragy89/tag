@@ -1,23 +1,21 @@
 from pyrogram import filters
-from config import OWNER_ID
-from state import stop, resume
+from utils.state import stop_tag, start_tag
 
 
 def stop_resume_handler(app):
 
-    @app.on_message(filters.command("stop"))
+    @app.on_message(filters.command("stop") & filters.group)
     async def stop_cmd(client, message):
-        if message.from_user.id != OWNER_ID:
-            return
+        stop_tag(message.chat.id)
+        await client.send_message(
+            message.chat.id,
+            "🛑 **Tagging stopped**",
+        )
 
-        stop()
-        await message.reply_text("⛔ Bot stopped.")
-
-
-    @app.on_message(filters.command("resume"))
+    @app.on_message(filters.command("resume") & filters.group)
     async def resume_cmd(client, message):
-        if message.from_user.id != OWNER_ID:
-            return
-
-        resume()
-        await message.reply_text("▶️ Bot resumed.")
+        start_tag(message.chat.id)
+        await client.send_message(
+            message.chat.id,
+            "▶️ **Tagging resumed**",
+        )
