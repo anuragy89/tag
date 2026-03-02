@@ -1,6 +1,7 @@
 import logging
 from pyrogram import Client
 from config import API_ID, API_HASH, BOT_TOKEN
+
 from handlers.start import start_handler
 from handlers.tag import tag_handler
 from handlers.broadcast import broadcast_handler
@@ -20,7 +21,7 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-# ✅ Correct function calls
+# register handlers
 start_handler(app)
 tag_handler(app)
 broadcast_handler(app)
