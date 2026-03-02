@@ -1,25 +1,30 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import MONGO_URI
 
-mongo = AsyncIOMotorClient(MONGO_URI)
-db = mongo["tagbot"]
+client = AsyncIOMotorClient(MONGO_URI)
+db = client["tagbot"]
 
-users = db.users
-groups = db.groups
+users_col = db.users
+groups_col = db.groups
+
 
 async def add_user(user_id: int):
-    await users.update_one(
+    await users_col.update_one(
         {"_id": user_id},
         {"$set": {"_id": user_id}},
         upsert=True
     )
 
+
 async def add_group(group_id: int):
-    await groups.update_one(
+    await groups_col.update_one(
         {"_id": group_id},
         {"$set": {"_id": group_id}},
         upsert=True
     )
 
-async def stats():
-    return await users.count_documents({}), await groups.count_documents({})
+
+async def get_stats():
+    users = await users_col.count_documents({})
+    groups = await groups_col.count_documents({})
+    return users, groups
