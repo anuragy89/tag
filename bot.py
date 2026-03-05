@@ -1,18 +1,15 @@
 """
-bot.py  ──  TagMaster Bot  (v2 — MongoDB edition)
-Author : You
-Stack  : python-telegram-bot 21.x  +  motor (async MongoDB)
+bot.py  ──  TagMaster Bot  (v3 — Smart Member Fetching)
+Stack  : python-telegram-bot 21.x  +  motor (MongoDB)  +  Pyrogram (MTProto)
 
-Fixed in v2:
-  ✅ MongoDB via motor (fully async — no blocking calls)
-  ✅ /stats   — live counts from MongoDB
-  ✅ /broadcast — with per-message progress + blocked-user cleanup
-  ✅ @admin / @all text triggers (not just slash commands)
-  ✅ new_chat_member  registered as StatusUpdate handler
-  ✅ tag_state race-condition fixed (state checked BEFORE & DURING loop)
-  ✅ /all custom-msg header fixed (was crashing on None concat)
-  ✅ bot_data tag-state cache for ultra-fast pause/stop checks
-  ✅ Proper asyncio.create_task error logging
+v3 Changes:
+  Smart member fetching via Pyrogram MTProto:
+    - Fetches ALL group members (not just those who messaged)
+    - Reads real Telegram UserStatus per member
+    - Tags in order: Online first -> Recently online -> Last week
+    - Skips members last seen > 7 days (last month / long ago)
+    - Falls back to message-tracked members if Pyrogram fails
+    - Shows live fetch progress + status breakdown before tagging
 """
 
 import os
@@ -40,6 +37,7 @@ from telegram.error import TelegramError, RetryAfter
 from telegram.constants import ParseMode
 
 import database as db
+import member_fetcher as mf
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -55,9 +53,9 @@ UPDATES_CHANNEL = os.environ.get("UPDATES_CHANNEL", "https://t.me/yourchannel")
 SUPPORT_GROUP   = os.environ.get("SUPPORT_GROUP",   "https://t.me/yourgroup")
 
 if not BOT_TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN environment variable is not set!")
+    raise RuntimeError("BOT_TOKEN not set!")
 if not BOT_OWNER:
-    raise RuntimeError("❌ OWNER_ID environment variable is not set!")
+    raise RuntimeError("OWNER_ID not set!")
 
 # ── Message pools ─────────────────────────────────────────────────────────────
 
@@ -99,7 +97,6 @@ ENGLISH_MSGS = [
     "Oi {name}! 😜 Tag! You're it. Now respond!",
     "{name}! ⭐ The squad needs you, no excuses!",
     "Hey {name}! 🫂 A hug from the group — now come say hi!",
-    "{name}! 🌈 Sunshine is great, but you make the group brighter!",
     "Calling {name}! 📡 Signal's strong, we know you're there! 😏",
 ]
 
@@ -116,7 +113,6 @@ GM_MSGS = [
     "Good Morning {name}! 🌞 Aaj ka agenda: masti karo, kuch kaam karo... mostly masti! 😄",
     "{name}! 🦋 Naya din, nayi energy! GM bhai/didi!",
     "Aye {name}! ⭐ Din shuru karo with full josh! Good Morning!",
-    "Wakey wakey {name}! 🌄 Duniya ne uthna shuru kar diya, tu bhi aa ja!",
 ]
 
 GN_MSGS = [
@@ -130,7 +126,6 @@ GN_MSGS = [
     "GN {name}! 🥱 Neend aa rahi hai? Toh so ja! Miss you already! 💫",
     "Good Night {name}! 🌠 Sapno mein milenge! 😄",
     "Sone se pehle {name} ko tag karna tha! 🌙 GN yaar, take care!",
-    "{name}! 🫶 Raat ki neend acchi ho... kal fresh hoke aana! GN 💤",
 ]
 
 TAGALL_MSGS = [
@@ -151,19 +146,16 @@ TAGALL_MSGS = [
 ]
 
 JTAG_MSGS = [
-    "{name}! 😂 Joke le ja:\n📌 Q: Homework kyun late tha?\n💡 A: Kyunki baap ne time pe diya nahi! 😭",
-    "{name}! 🤣 Aaj ka joke:\n📌 Student: Sir main fail kyun hua?\n💡 Teacher: Kyunki tum paas nahi aaye! 😂",
-    "{name}! 😜 Joke of the day:\n📌 Banta: Yaar meri biwi bahut seedhi hai\n📌 Santa: Toh jhagda kaise?\n💡 Banta: Main tircha hun! 🤣",
-    "{name}! 🤡 Chhota joke:\n📌 Darzi ko kapde siwane gaya\n📌 Darzi: '3 din lagenge'\n💡 Main: 'Theek hai, 3 saal baad aata hun' 😂",
-    "{name}! 😂 Gym wala joke:\n📌 Maine 6 pack ke liye gym join kiya\n💡 Ab 1 pack bhi nahi hai 🍕",
-    "{name}! 🎭 Relatable joke:\n📌 Maa: Beta padhai kar\n📌 Beta: Kal karunga\n💡 Maa: 3 saal se kal kal kar raha hai! 😭😂",
-    "{name}! 🤣 Morning joke:\n📌 Wake up at 6 AM: Impossible ❌\n💡 Wake up at 6 AM for free food: Done ✅",
-    "{name} bhai/didi! 😜 WiFi wala:\n📌 Neighbour ka WiFi: Connected\n💡 Neighbour: 'Bhai password change kar diya' 💀😂",
-    "{name}! 😂 Exam joke:\n📌 Paper dekha toh aankh bhar aayi\n💡 Teacher: Kyon?\n📌 Mujhe bhi yahin sawaal aata tha! 🤣",
-    "{name}! 🤡 Love joke:\n📌 Usne kaha 'I love you'\n📌 Maine kaha 'Proof do'\n💡 Usne math ki copy dikhayi 😭😂",
+    "{name}! 😂 Joke le ja:\nQ: Homework kyun late tha?\nA: Kyunki baap ne time pe diya nahi! 😭",
+    "{name}! 🤣 Aaj ka joke:\nStudent: Sir main fail kyun hua?\nTeacher: Kyunki tum paas nahi aaye! 😂",
+    "{name}! 😜 Joke of the day:\nBanta: Yaar meri biwi bahut seedhi hai\nSanta: Toh jhagda kaise?\nBanta: Main tircha hun! 🤣",
+    "{name}! 🤡 Chhota joke:\nDarzi ko kapde siwane gaya\nDarzi: '3 din lagenge'\nMain: 'Theek hai, 3 saal baad aata hun' 😂",
+    "{name}! 😂 Gym wala joke:\nMaine 6 pack ke liye gym join kiya\nAb 1 pack bhi nahi hai 🍕",
+    "{name}! 🎭 Relatable joke:\nMaa: Beta padhai kar\nBeta: Kal karunga\nMaa: 3 saal se kal kal kar raha hai! 😭😂",
+    "{name}! 🤣 Morning joke:\nWake up at 6 AM: Impossible\nWake up at 6 AM for free food: Done ✅",
+    "{name} bhai/didi! 😜 WiFi wala:\nNeighbour ka WiFi: Connected\nNeighbour: 'Bhai password change kar diya' 💀😂",
 ]
 
-# ── All task keys ─────────────────────────────────────────────────────────────
 ALL_TASK_KEYS = ["hitag", "entag", "gmtag", "gntag", "tagall", "jtag", "all_tag"]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -180,18 +172,12 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: 
 
 
 def chunk_list(lst: list, n: int):
-    """Yield successive n-sized chunks from lst."""
     for i in range(0, len(lst), n):
-        yield lst[i : i + n]
+        yield lst[i:i + n]
 
 
-async def safe_send(
-    context: ContextTypes.DEFAULT_TYPE,
-    chat_id: int,
-    text: str,
-    **kwargs,
-):
-    """Send a message with automatic RetryAfter / TelegramError handling."""
+async def safe_send(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str, **kwargs):
+    """Send with RetryAfter handling."""
     for attempt in range(6):
         try:
             return await context.bot.send_message(chat_id, text, **kwargs)
@@ -200,10 +186,68 @@ async def safe_send(
             logger.warning("RetryAfter %ss — attempt %d/6", wait, attempt + 1)
             await asyncio.sleep(float(wait) + 1.5)
         except TelegramError as e:
-            logger.error("TelegramError in safe_send to %s: %s", chat_id, e)
+            logger.error("TelegramError sending to %s: %s", chat_id, e)
             break
     return None
 
+
+# ── Member fetch with status ──────────────────────────────────────────────────
+
+async def fetch_members_for_tag(
+    chat_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+    status_msg,
+) -> tuple[list, bool]:
+    """
+    Fetch and sort members using Pyrogram.
+    Updates the status_msg with live progress.
+    Returns (sorted_members, is_fallback).
+    """
+    try:
+        await status_msg.edit_text(
+            "⏳ <b>Fetching members from Telegram...</b>\n"
+            "📡 Reading online status of all members\n"
+            "<i>This takes a few seconds...</i>",
+            parse_mode=ParseMode.HTML,
+        )
+    except TelegramError:
+        pass
+
+    members, stats = await mf.get_sorted_members(chat_id)
+    is_fallback = stats.get("fallback", False)
+
+    # Update status with breakdown
+    if not is_fallback and stats.get("total", 0) > 0:
+        breakdown = (
+            f"✅ <b>Members fetched!</b>\n\n"
+            f"🟢 Online now    : <b>{stats.get('online', 0)}</b>\n"
+            f"🟡 Recently      : <b>{stats.get('recently', 0)}</b>\n"
+            f"🔵 Last week     : <b>{stats.get('last_week', 0)}</b>\n"
+            f"⚫ Excluded (old): <b>{stats.get('excluded', 0)}</b>\n\n"
+            f"🏷️ <b>Tagging {len(members)} active members...</b>\n"
+            "📌 Use /pause ⏸️ | /stop 🛑"
+        )
+    elif is_fallback:
+        breakdown = (
+            f"⚠️ <b>Using cached member list</b> (Pyrogram fallback)\n\n"
+            f"👥 Tagging <b>{len(members)}</b> members\n"
+            "📌 Use /pause ⏸️ | /stop 🛑"
+        )
+    else:
+        breakdown = (
+            "⚠️ <b>No active members found!</b>\n\n"
+            "<i>Make sure the bot is group admin so it can read the member list.</i>"
+        )
+
+    try:
+        await status_msg.edit_text(breakdown, parse_mode=ParseMode.HTML)
+    except TelegramError:
+        pass
+
+    return members, is_fallback
+
+
+# ── Core tagging engine ───────────────────────────────────────────────────────
 
 async def _tagging_loop(
     context: ContextTypes.DEFAULT_TYPE,
@@ -214,76 +258,42 @@ async def _tagging_loop(
     per_chunk: int = 5,
     delay: float = 3.5,
 ):
-    """
-    Core tagging engine shared by all tag commands.
-    Checks MongoDB state before every chunk for instant pause/stop response.
-    """
+    """Core tagging loop with pause/stop support. Checks DB state before every chunk."""
     await db.set_tag_state(chat_id, task_key, "running")
 
     for chunk in chunk_list(members, per_chunk):
-        # ── Check state ───────────────────────────────────────────────────────
         state = await db.get_tag_state(chat_id, task_key)
 
         if state == "stopped":
-            await safe_send(
-                context, chat_id,
-                "⛔ <b>Tagging stopped!</b>",
-                parse_mode=ParseMode.HTML,
-            )
+            await safe_send(context, chat_id, "⛔ <b>Tagging stopped!</b>", parse_mode=ParseMode.HTML)
             return
 
-        # Busy-wait while paused
         while state == "paused":
             await asyncio.sleep(1.5)
             state = await db.get_tag_state(chat_id, task_key)
             if state == "stopped":
-                await safe_send(
-                    context, chat_id,
-                    "⛔ <b>Tagging stopped!</b>",
-                    parse_mode=ParseMode.HTML,
-                )
+                await safe_send(context, chat_id, "⛔ <b>Tagging stopped!</b>", parse_mode=ParseMode.HTML)
                 return
 
-        # ── Build mention string ──────────────────────────────────────────────
         mentions = " ".join(
-            f'<a href="tg://user?id={u["user_id"]}">'
-            f'{u["first_name"]}</a>'
+            f'<a href="tg://user?id={u["user_id"]}">{u["first_name"]}</a>'
             for u in chunk
         )
         msg_line = random.choice(msg_pool).replace("{name}", "").strip()
-        await safe_send(
-            context, chat_id,
-            f"{mentions}\n\n{msg_line}",
-            parse_mode=ParseMode.HTML,
-        )
+        await safe_send(context, chat_id, f"{mentions}\n\n{msg_line}", parse_mode=ParseMode.HTML)
         await asyncio.sleep(delay)
 
-    # Done
     await db.set_tag_state(chat_id, task_key, "idle")
-    await safe_send(
-        context, chat_id,
-        "✅ <b>Tagging complete!</b> Everyone's been tagged! 🎉",
-        parse_mode=ParseMode.HTML,
-    )
+    await safe_send(context, chat_id, "✅ <b>Tagging complete!</b> Everyone's been tagged! 🎉", parse_mode=ParseMode.HTML)
 
 
-def _start_tagging_task(
-    context: ContextTypes.DEFAULT_TYPE,
-    chat_id: int,
-    members: list,
-    msg_pool: list,
-    task_key: str,
-    per_chunk: int = 5,
-    delay: float = 3.5,
-):
-    """Wrap _tagging_loop in a task with error logging."""
+def _start_tagging_task(context, chat_id, members, msg_pool, task_key, per_chunk=5, delay=3.5):
     async def _wrapper():
         try:
             await _tagging_loop(context, chat_id, members, msg_pool, task_key, per_chunk, delay)
         except Exception as exc:
             logger.exception("Tagging task %s crashed: %s", task_key, exc)
             await db.set_tag_state(chat_id, task_key, "idle")
-
     asyncio.create_task(_wrapper())
 
 
@@ -300,31 +310,21 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔥 <b>What I Can Do:</b>\n\n"
         "🏷️ <b>8 Tagging Modes</b> — Hindi, English, GM, GN, Jokes, All & more!\n"
         "😄 <b>Human-Like Messages</b> — Funny, flirty, meme-worthy tags!\n"
-        "🛡️ <b>Spam Protected</b> — FloodWait safe, smart delays built-in!\n"
+        "🟢 <b>Smart Member Fetch</b> — Tags Online first, then Recently, then Last Week!\n"
+        "🛡️ <b>Spam Protected</b> — RetryAfter safe with smart delays!\n"
         "⏸️ <b>Tag Controls</b> — Pause, Resume & Stop anytime!\n"
         "📢 <b>Broadcast</b> — Owner can message all users & groups!\n"
         "📊 <b>Stats</b> — Live count of groups & users!\n"
         "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👇 <b>Choose an option below to get started!</b>"
+        "👇 <b>Choose an option below!</b>"
     )
-
     keyboard = [
-        [
-            InlineKeyboardButton(
-                "➕ Add Me to Your Group",
-                url=f"https://t.me/{context.bot.username}?startgroup=true",
-            )
-        ],
-        [
-            InlineKeyboardButton("📖 Help & Commands", callback_data="help_menu"),
-            InlineKeyboardButton("📢 Updates", url=UPDATES_CHANNEL),
-        ],
+        [InlineKeyboardButton("➕ Add Me to Your Group",
+                              url=f"https://t.me/{context.bot.username}?startgroup=true")],
+        [InlineKeyboardButton("📖 Help & Commands", callback_data="help_menu"),
+         InlineKeyboardButton("📢 Updates", url=UPDATES_CHANNEL)],
     ]
-    await update.message.reply_text(
-        text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # ── /help ─────────────────────────────────────────────────────────────────────
@@ -332,31 +332,32 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 HELP_TEXT = (
     "<b>📖 TagMaster Bot — All Commands</b>\n"
     "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    "<b>🏷️ Tagging Commands</b> <i>(Group Admins only)</i>\n\n"
-    "/hitag  — Tag all members in <b>Hindi</b> 🇮🇳\n"
-    "/entag  — Tag all members in <b>English</b> 🇬🇧\n"
-    "/gmtag  — Tag all with <b>Good Morning</b> msgs 🌅\n"
-    "/gntag  — Tag all with <b>Good Night</b> msgs 🌙\n"
-    "/tagall — Tag all (Hinglish mix — memes+jokes+flirt) 🔥\n"
-    "/jtag   — Tag all with <b>Jokes</b> (Hinglish) 😂\n\n"
+    "<b>🏷️ Tagging</b> <i>(Group Admins only)</i>\n\n"
+    "/hitag  — Tag all in <b>Hindi</b> 🇮🇳\n"
+    "/entag  — Tag all in <b>English</b> 🇬🇧\n"
+    "/gmtag  — Good Morning tags 🌅\n"
+    "/gntag  — Good Night tags 🌙\n"
+    "/tagall — Hinglish mix (memes+jokes+flirt) 🔥\n"
+    "/jtag   — Jokes tags 😂\n\n"
     "<b>👑 Admin / All Tag</b>\n\n"
-    "/admin &lt;msg&gt;  — Tag all group admins 👮\n"
+    "/admin &lt;msg&gt;  — Tag all admins 👮 <i>(anyone)</i>\n"
     "@admin &lt;msg&gt;  — Same as /admin\n"
-    "/all &lt;msg&gt;    — Tag all members (admins only) 📢\n"
-    "@all &lt;msg&gt;    — Same as /all\n"
-    "<i>💡 Custom message is optional e.g. /admin plz start vc</i>\n\n"
-    "<b>⏸️ Tag Control</b> <i>(Group Admins only)</i>\n\n"
-    "/stop   — Stop current tagging 🛑\n"
+    "/all &lt;msg&gt;    — Tag all members 📢 <i>(admins)</i>\n"
+    "@all &lt;msg&gt;    — Same as /all\n\n"
+    "<b>⏸️ Controls</b> <i>(Group Admins only)</i>\n\n"
+    "/stop   — Stop all tagging 🛑\n"
     "/pause  — Pause tagging ⏸️\n"
-    "/resume — Resume paused tagging ▶️\n\n"
+    "/resume — Resume tagging ▶️\n\n"
     "<b>📊 General</b>\n\n"
     "/start  — Welcome message\n"
-    "/help   — Show this menu ❓\n"
-    "/stats  — Bot usage stats 📈\n\n"
+    "/help   — This menu ❓\n"
+    "/stats  — Live bot stats 📈\n\n"
     "<b>👑 Owner Only</b>\n\n"
-    "/broadcast &lt;msg&gt; — Broadcast to all users + groups\n\n"
+    "/broadcast &lt;msg&gt; — Broadcast to all\n\n"
     "━━━━━━━━━━━━━━━━━━━━━━━\n"
-    "<i>⚡ Tags 5–6 users per message with smart delays to avoid Telegram bans ✅</i>"
+    "<b>🟢 Smart Tagging Order:</b>\n"
+    "Online now → Recently online → Last week\n"
+    "<i>Members inactive 7+ days are skipped ✅</i>"
 )
 
 
@@ -368,11 +369,7 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_start")]]
-    await query.edit_message_text(
-        HELP_TEXT,
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    await query.edit_message_text(HELP_TEXT, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def back_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -386,36 +383,26 @@ async def back_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         "🔥 <b>What I Can Do:</b>\n\n"
         "🏷️ <b>8 Tagging Modes</b> — Hindi, English, GM, GN, Jokes, All & more!\n"
         "😄 <b>Human-Like Messages</b> — Funny, flirty, meme-worthy tags!\n"
-        "🛡️ <b>Spam Protected</b> — FloodWait safe, smart delays built-in!\n"
+        "🟢 <b>Smart Member Fetch</b> — Tags Online first, then Recently, then Last Week!\n"
+        "🛡️ <b>Spam Protected</b> — RetryAfter safe with smart delays!\n"
         "⏸️ <b>Tag Controls</b> — Pause, Resume & Stop anytime!\n"
         "📢 <b>Broadcast</b> — Owner can message all users & groups!\n"
         "📊 <b>Stats</b> — Live count of groups & users!\n"
         "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👇 <b>Choose an option below to get started!</b>"
+        "👇 <b>Choose an option below!</b>"
     )
     keyboard = [
-        [
-            InlineKeyboardButton(
-                "➕ Add Me to Your Group",
-                url=f"https://t.me/{context.bot.username}?startgroup=true",
-            )
-        ],
-        [
-            InlineKeyboardButton("📖 Help & Commands", callback_data="help_menu"),
-            InlineKeyboardButton("📢 Updates", url=UPDATES_CHANNEL),
-        ],
+        [InlineKeyboardButton("➕ Add Me to Your Group",
+                              url=f"https://t.me/{context.bot.username}?startgroup=true")],
+        [InlineKeyboardButton("📖 Help & Commands", callback_data="help_menu"),
+         InlineKeyboardButton("📢 Updates", url=UPDATES_CHANNEL)],
     ]
-    await query.edit_message_text(
-        text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
+    await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # ── Bot added to group ────────────────────────────────────────────────────────
 
 async def new_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Fires when any user joins.  We only care when IT'S THE BOT."""
     if not update.message or not update.message.new_chat_members:
         return
     for member in update.message.new_chat_members:
@@ -423,19 +410,19 @@ async def new_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_
             chat = update.effective_chat
             await db.save_group(chat.id, chat.title or "Unknown")
             await safe_send(
-                context,
-                chat.id,
-                "🎉 <b>Thanks for adding me to this group!</b>\n\n"
+                context, chat.id,
+                "🎉 <b>Thanks for adding me!</b>\n\n"
                 "I'm <b>TagMaster Bot</b> 🤖 — your smart group tagger!\n\n"
-                "📌 Type /help to see all my commands and features.\n\n"
-                "I support <b>8 tagging modes</b>, anti-spam protection, "
-                "pause/stop controls & much more!\n\n"
-                "Admins can control everything. Let's get started! 🔥",
+                "📌 Type /help to see all my commands.\n\n"
+                "💡 <b>Tip:</b> Make me an <b>admin</b> so I can fetch all members "
+                "and read their online status for smart tagging! 🟢\n\n"
+                "I support <b>8 tagging modes</b>, smart member fetching, "
+                "pause/stop controls & much more! 🔥",
                 parse_mode=ParseMode.HTML,
             )
 
 
-# ── Tag commands ──────────────────────────────────────────────────────────────
+# ── Generic tag command handler ───────────────────────────────────────────────
 
 async def _generic_tag(
     update: Update,
@@ -444,41 +431,34 @@ async def _generic_tag(
     task_key: str,
     label: str,
 ):
-    """Shared handler for hitag / entag / gmtag / gntag / tagall / jtag."""
     chat = update.effective_chat
     if chat.type == "private":
         return await update.message.reply_text("⚠️ This command works in groups only!")
 
     if not await is_admin(update, context):
         return await update.message.reply_text(
-            "❌ <b>Only group admins can use this command!</b>",
-            parse_mode=ParseMode.HTML,
+            "❌ <b>Only group admins can use this!</b>", parse_mode=ParseMode.HTML
         )
 
-    current = await db.get_tag_state(chat.id, task_key)
-    if current == "running":
+    if await db.get_tag_state(chat.id, task_key) == "running":
         return await update.message.reply_text(
-            "⚠️ A tagging session is already running!\n"
-            "Use /stop to stop it first.",
+            "⚠️ A tagging session is already running!\nUse /stop first."
         )
 
-    members = await db.get_group_members(chat.id)
-    if not members:
-        return await update.message.reply_text(
-            "⚠️ <b>No members tracked yet!</b>\n\n"
-            "Members are tracked automatically as they chat in this group. "
-            "Ask members to send a message first, then retry.",
-            parse_mode=ParseMode.HTML,
-        )
-
-    await update.message.reply_text(
-        f"🚀 <b>Starting {label} Tagging...</b>\n"
-        f"👥 Members to tag: <b>{len(members)}</b>\n"
-        f"⏱️ Estimated time: ~{max(1, len(members)//5 * 4)} seconds\n\n"
-        "📌 Use /pause ⏸️ | /stop 🛑 to control",
+    # Send status message that we'll edit live
+    status_msg = await update.message.reply_text(
+        f"🚀 <b>Preparing {label} Tagging...</b>\n"
+        "⏳ Fetching members from Telegram...",
         parse_mode=ParseMode.HTML,
     )
 
+    # Fetch members with status (Pyrogram)
+    members, is_fallback = await fetch_members_for_tag(chat.id, context, status_msg)
+
+    if not members:
+        return  # status_msg already updated with error
+
+    # Start tagging
     _start_tagging_task(context, chat.id, members, msg_pool, task_key)
 
 
@@ -495,8 +475,7 @@ async def gntag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _generic_tag(update, context, GN_MSGS, "gntag", "Good Night 🌙")
 
 async def tagall_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pool = TAGALL_MSGS + HINDI_MSGS + ENGLISH_MSGS
-    await _generic_tag(update, context, pool, "tagall", "Tag All 🔥")
+    await _generic_tag(update, context, TAGALL_MSGS + HINDI_MSGS + ENGLISH_MSGS, "tagall", "Tag All 🔥")
 
 async def jtag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _generic_tag(update, context, JTAG_MSGS, "jtag", "Jokes 😂")
@@ -516,31 +495,25 @@ async def _admin_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, custom_
 
     admin_list = [
         {"user_id": a.user.id, "first_name": a.user.first_name or "Admin"}
-        for a in admins
-        if not a.user.is_bot
+        for a in admins if not a.user.is_bot
     ]
     if not admin_list:
         return await update.message.reply_text("⚠️ No human admins found!")
 
     header = f"📢 <b>{custom_msg}</b>\n\n" if custom_msg else "👮 <b>Attention Admins!</b> 🔔\n\n"
-
     await update.message.reply_text(
-        f"👮 Tagging <b>{len(admin_list)}</b> admin(s)...",
-        parse_mode=ParseMode.HTML,
+        f"👮 Tagging <b>{len(admin_list)}</b> admin(s)...", parse_mode=ParseMode.HTML
     )
-
     for chunk in chunk_list(admin_list, 6):
         tags = " ".join(
-            f'<a href="tg://user?id={u["user_id"]}">{u["first_name"]}</a>'
-            for u in chunk
+            f'<a href="tg://user?id={u["user_id"]}">{u["first_name"]}</a>' for u in chunk
         )
         await safe_send(context, chat.id, f"{header}{tags}", parse_mode=ParseMode.HTML)
         await asyncio.sleep(2.0)
 
 
 async def admin_tag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    custom = " ".join(context.args) if context.args else ""
-    await _admin_tag(update, context, custom)
+    await _admin_tag(update, context, " ".join(context.args) if context.args else "")
 
 
 # ── /all & @all ───────────────────────────────────────────────────────────────
@@ -551,27 +524,21 @@ async def _all_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, custom_ms
         return await update.message.reply_text("⚠️ Works in groups only!")
 
     if not await is_admin(update, context):
-        return await update.message.reply_text(
-            "❌ <b>Admins only!</b>", parse_mode=ParseMode.HTML
-        )
+        return await update.message.reply_text("❌ <b>Admins only!</b>", parse_mode=ParseMode.HTML)
 
-    current = await db.get_tag_state(chat.id, "all_tag")
-    if current == "running":
+    if await db.get_tag_state(chat.id, "all_tag") == "running":
         return await update.message.reply_text("⚠️ Tagging already running! Use /stop first.")
-
-    members = await db.get_group_members(chat.id)
-    if not members:
-        return await update.message.reply_text(
-            "⚠️ No members tracked yet. Ask members to send a message first!"
-        )
 
     header = f"📢 <b>{custom_msg}</b>\n\n" if custom_msg else None
 
-    await update.message.reply_text(
-        f"📢 Tagging <b>{len(members)}</b> members...\n"
-        "📌 Use /pause ⏸️ | /stop 🛑 to control",
+    status_msg = await update.message.reply_text(
+        "🚀 <b>Preparing All Tag...</b>\n⏳ Fetching members...",
         parse_mode=ParseMode.HTML,
     )
+
+    members, _ = await fetch_members_for_tag(chat.id, context, status_msg)
+    if not members:
+        return
 
     async def _run():
         await db.set_tag_state(chat.id, "all_tag", "running")
@@ -587,15 +554,12 @@ async def _all_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, custom_ms
                     if state == "stopped":
                         await safe_send(context, chat.id, "⛔ Tagging stopped.", parse_mode=ParseMode.HTML)
                         return
-
                 tags = " ".join(
-                    f'<a href="tg://user?id={u["user_id"]}">{u["first_name"]}</a>'
-                    for u in chunk
+                    f'<a href="tg://user?id={u["user_id"]}">{u["first_name"]}</a>' for u in chunk
                 )
                 text = f"{header}{tags}" if header else tags
                 await safe_send(context, chat.id, text, parse_mode=ParseMode.HTML)
                 await asyncio.sleep(3.0)
-
             await db.set_tag_state(chat.id, "all_tag", "idle")
             await safe_send(context, chat.id, "✅ Done! All members tagged. 🎉", parse_mode=ParseMode.HTML)
         except Exception as exc:
@@ -606,26 +570,20 @@ async def _all_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, custom_ms
 
 
 async def all_tag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    custom = " ".join(context.args) if context.args else ""
-    await _all_tag(update, context, custom)
+    await _all_tag(update, context, " ".join(context.args) if context.args else "")
 
 
-# ── Text-based @admin / @all triggers ────────────────────────────────────────
+# ── Text triggers for @admin / @all ──────────────────────────────────────────
 
 async def text_trigger_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle @admin <msg> and @all <msg> as plain text."""
     msg = update.message
     if not msg or not msg.text:
         return
     text = msg.text.strip()
-
     if text.lower().startswith("@admin"):
-        rest = text[len("@admin"):].strip()
-        await _admin_tag(update, context, rest)
-
+        await _admin_tag(update, context, text[len("@admin"):].strip())
     elif text.lower().startswith("@all"):
-        rest = text[len("@all"):].strip()
-        await _all_tag(update, context, rest)
+        await _all_tag(update, context, text[len("@all"):].strip())
 
 
 # ── Control commands ──────────────────────────────────────────────────────────
@@ -636,14 +594,9 @@ async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("⚠️ Use in groups only!")
     if not await is_admin(update, context):
         return await update.message.reply_text("❌ Admins only!")
-
     for key in ALL_TASK_KEYS:
         await db.set_tag_state(chat.id, key, "stopped")
-
-    await update.message.reply_text(
-        "⛔ <b>All tagging stopped!</b>",
-        parse_mode=ParseMode.HTML,
-    )
+    await update.message.reply_text("⛔ <b>All tagging stopped!</b>", parse_mode=ParseMode.HTML)
 
 
 async def pause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -652,18 +605,13 @@ async def pause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("⚠️ Use in groups only!")
     if not await is_admin(update, context):
         return await update.message.reply_text("❌ Admins only!")
-
     paused_any = False
     for key in ALL_TASK_KEYS:
         if await db.get_tag_state(chat.id, key) == "running":
             await db.set_tag_state(chat.id, key, "paused")
             paused_any = True
-
     if paused_any:
-        await update.message.reply_text(
-            "⏸️ <b>Tagging paused!</b>\nUse /resume ▶️ to continue.",
-            parse_mode=ParseMode.HTML,
-        )
+        await update.message.reply_text("⏸️ <b>Tagging paused!</b> Use /resume ▶️", parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text("ℹ️ No active tagging session to pause.")
 
@@ -674,18 +622,13 @@ async def resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("⚠️ Use in groups only!")
     if not await is_admin(update, context):
         return await update.message.reply_text("❌ Admins only!")
-
     resumed_any = False
     for key in ALL_TASK_KEYS:
         if await db.get_tag_state(chat.id, key) == "paused":
             await db.set_tag_state(chat.id, key, "running")
             resumed_any = True
-
     if resumed_any:
-        await update.message.reply_text(
-            "▶️ <b>Tagging resumed!</b>",
-            parse_mode=ParseMode.HTML,
-        )
+        await update.message.reply_text("▶️ <b>Tagging resumed!</b>", parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text("ℹ️ No paused tagging session found.")
 
@@ -694,12 +637,12 @@ async def resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats = await db.get_stats()
-    now   = datetime.now().strftime("%d %b %Y  %H:%M UTC")
+    now = datetime.now().strftime("%d %b %Y  %H:%M UTC")
     await update.message.reply_text(
         "📊 <b>TagMaster Bot — Live Stats</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 Total Users   : <b>{stats['users']:,}</b>\n"
-        f"🏘️ Total Groups  : <b>{stats['groups']:,}</b>\n"
+        f"👤 Total Users  : <b>{stats['users']:,}</b>\n"
+        f"🏘️ Total Groups : <b>{stats['groups']:,}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         f"🕒 As of: <i>{now}</i>",
         parse_mode=ParseMode.HTML,
@@ -710,19 +653,17 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != BOT_OWNER:
-        return await update.message.reply_text(
-            "❌ <b>Owner only command!</b>", parse_mode=ParseMode.HTML
-        )
+        return await update.message.reply_text("❌ <b>Owner only!</b>", parse_mode=ParseMode.HTML)
 
     if not context.args:
         return await update.message.reply_text(
-            "📢 <b>Usage:</b> /broadcast &lt;your message here&gt;\n\n"
-            "<i>Example: /broadcast Bot is updated! Check /help</i>",
+            "📢 <b>Usage:</b> /broadcast &lt;message&gt;\n"
+            "<i>Example: /broadcast Bot updated! Check /help</i>",
             parse_mode=ParseMode.HTML,
         )
 
     bcast_text = " ".join(context.args)
-    formatted  = (
+    formatted = (
         "📢 <b>Message from Bot Owner</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{bcast_text}\n\n"
@@ -732,17 +673,15 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     all_users  = await db.get_all_users()
     all_groups = await db.get_all_groups()
-    total      = len(all_users) + len(all_groups)
+    total = len(all_users) + len(all_groups)
 
     if total == 0:
-        return await update.message.reply_text("⚠️ No users or groups in database yet!")
+        return await update.message.reply_text("⚠️ No users or groups in DB yet!")
 
-    # Send initial status message
     status = await update.message.reply_text(
         f"📤 <b>Broadcasting...</b>\n"
         f"👤 Users : {len(all_users)}\n"
         f"🏘️ Groups: {len(all_groups)}\n"
-        f"📦 Total : {total}\n\n"
         "⏳ Please wait...",
         parse_mode=ParseMode.HTML,
     )
@@ -750,35 +689,26 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent_u = failed_u = blocked_u = 0
     sent_g = failed_g = 0
 
-    # ── Broadcast to users ────────────────────────────────────────────────────
     for uid in all_users:
         try:
             await context.bot.send_message(uid, formatted, parse_mode=ParseMode.HTML)
             sent_u += 1
         except TelegramError as e:
-            err_str = str(e).lower()
-            if "blocked" in err_str or "deactivated" in err_str or "not found" in err_str:
+            if any(x in str(e).lower() for x in ("blocked", "deactivated", "not found")):
                 blocked_u += 1
             else:
                 failed_u += 1
-        # Rate-limit: ~20 msgs/sec max
         await asyncio.sleep(0.05)
-
-        # Update progress every 50 users
         if (sent_u + failed_u + blocked_u) % 50 == 0:
             try:
                 await status.edit_text(
-                    f"📤 <b>Broadcasting... (users)</b>\n"
-                    f"✅ Sent    : {sent_u}\n"
-                    f"🚫 Blocked : {blocked_u}\n"
-                    f"❌ Failed  : {failed_u}\n"
-                    f"⏳ Remaining: ~{len(all_users) - sent_u - failed_u - blocked_u}",
+                    f"📤 <b>Broadcasting users...</b>\n"
+                    f"✅ Sent: {sent_u} | 🚫 Blocked: {blocked_u} | ❌ Failed: {failed_u}",
                     parse_mode=ParseMode.HTML,
                 )
             except TelegramError:
                 pass
 
-    # ── Broadcast to groups ───────────────────────────────────────────────────
     for gid in all_groups:
         try:
             await context.bot.send_message(gid, formatted, parse_mode=ParseMode.HTML)
@@ -787,58 +717,57 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             failed_g += 1
         await asyncio.sleep(0.1)
 
-    # ── Final report ──────────────────────────────────────────────────────────
     await status.edit_text(
         "✅ <b>Broadcast Complete!</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>Users</b>\n"
-        f"   ✔️ Sent    : {sent_u}\n"
-        f"   🚫 Blocked : {blocked_u}\n"
-        f"   ❌ Failed  : {failed_u}\n\n"
-        f"🏘️ <b>Groups</b>\n"
-        f"   ✔️ Sent    : {sent_g}\n"
-        f"   ❌ Failed  : {failed_g}\n"
+        f"👤 <b>Users</b> — ✔️ {sent_u} | 🚫 {blocked_u} blocked | ❌ {failed_u} failed\n"
+        f"🏘️ <b>Groups</b> — ✔️ {sent_g} | ❌ {failed_g} failed\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         f"📦 <b>Total sent: {sent_u + sent_g}</b>",
         parse_mode=ParseMode.HTML,
     )
 
 
-# ── Track users & group members ───────────────────────────────────────────────
+# ── Activity tracker ──────────────────────────────────────────────────────────
 
 async def track_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Save user & group-member data on every message."""
     if not update.effective_user or not update.effective_chat:
         return
     user = update.effective_user
     chat = update.effective_chat
-
-    # Always save the user
     await db.save_user(user.id, user.first_name or "User", user.username)
-
-    # If in a group, save the group and member
     if chat.type in ("group", "supergroup"):
         await db.save_group(chat.id, chat.title or "Group")
         await db.save_member(chat.id, user.id, user.first_name or "User")
 
 
-# ── Application setup ─────────────────────────────────────────────────────────
+# ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 async def post_init(application: Application):
-    """Called after Application is built — initialise MongoDB here."""
     await db.init_db()
-    logger.info("✅ Bot is online | Owner ID: %s", BOT_OWNER)
+    # Start Pyrogram client for member fetching
+    try:
+        await mf.start_pyro()
+    except Exception as e:
+        logger.warning("Pyrogram failed to start (member fetching will use fallback): %s", e)
+    logger.info("Bot online | Owner: %s", BOT_OWNER)
 
+
+async def post_shutdown(application: Application):
+    await mf.stop_pyro()
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     app = (
         Application.builder()
         .token(BOT_TOKEN)
         .post_init(post_init)
+        .post_shutdown(post_shutdown)
         .build()
     )
 
-    # ── Command handlers ──────────────────────────────────────────────────────
     app.add_handler(CommandHandler("start",     start_cmd))
     app.add_handler(CommandHandler("help",      help_cmd))
     app.add_handler(CommandHandler("hitag",     hitag_cmd))
@@ -855,35 +784,17 @@ def main():
     app.add_handler(CommandHandler("stats",     stats_cmd))
     app.add_handler(CommandHandler("broadcast", broadcast_cmd))
 
-    # ── Callback query handlers ───────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(help_callback,       pattern="^help_menu$"))
     app.add_handler(CallbackQueryHandler(back_start_callback, pattern="^back_start$"))
 
-    # ── @admin / @all text triggers (groups only) ─────────────────────────────
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND,
-            text_trigger_handler,
-        )
-    )
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND,
+        text_trigger_handler,
+    ))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_member_handler))
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, track_activity))
 
-    # ── New chat member (bot added to group) ──────────────────────────────────
-    app.add_handler(
-        MessageHandler(
-            filters.StatusUpdate.NEW_CHAT_MEMBERS,
-            new_chat_member_handler,
-        )
-    )
-
-    # ── Activity tracker (track all users & members) ──────────────────────────
-    app.add_handler(
-        MessageHandler(
-            filters.ALL & ~filters.COMMAND,
-            track_activity,
-        )
-    )
-
-    logger.info("🤖 TagMaster Bot polling started...")
+    logger.info("TagMaster Bot polling started...")
     app.run_polling(drop_pending_updates=True)
 
 
