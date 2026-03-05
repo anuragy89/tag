@@ -3,30 +3,46 @@
   "description": "Telegram Group Tagging Bot — 8 modes, MongoDB, spam protection & admin controls (Docker/Container Stack)",
   "keywords": ["telegram", "bot", "tagging", "python", "mongodb", "docker"],
   "stack": "container",
-  "env": {
-    "BOT_TOKEN": {
+  "env":{
+      "API_ID": {
+        "description": "Get this value from https://my.telegram.org",
+        "value": "",
+        "required": true
+      },
+      "API_HASH": {
+        "description": "Get this value from https://my.telegram.org",
+        "value": "",
+        "required": true
+      },
+    
+      "BOT_TOKEN": {
       "description": "Your Telegram Bot Token — get from @BotFather on Telegram",
       "required": true
-    },
-    "OWNER_ID": {
+      },
+    
+      "OWNER_ID": {
       "description": "Your Telegram User ID — get it by messaging @userinfobot on Telegram",
       "required": true
-    },
-    "MONGO_URI": {
+      },
+    
+      "MONGO_URI": {
       "description": "MongoDB Atlas URI — e.g. mongodb+srv://user:pass@cluster.mongodb.net/",
       "required": true
-    },
-    "DB_NAME": {
+      },
+    
+      "DB_NAME": {
       "description": "MongoDB database name",
       "value": "tagmaster",
       "required": false
-    },
-    "UPDATES_CHANNEL": {
+      },
+    
+      "UPDATES_CHANNEL": {
       "description": "Your Telegram updates channel link",
       "value": "https://t.me/yourchannel",
       "required": false
-    },
-    "SUPPORT_GROUP": {
+     },
+    
+     "SUPPORT_GROUP": {
       "description": "Your Telegram support group link",
       "value": "https://t.me/yourgroup",
       "required": false
