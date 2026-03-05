@@ -1,124 +1,126 @@
 """
-database.py — SQLite-backed persistence for TagMaster Bot
-All tables are auto-created on first run.
+database.py  ──  MongoDB (motor async driver) for TagMaster Bot
+Collections:
+  • users         – every user who /start'd the bot
+  • groups        – every group the bot was added to
+  • group_members – members seen chatting in a group
+  • tag_states    – per-group running/paused/stopped state
 """
 
-import sqlite3
 import os
-from contextlib import contextmanager
+import logging
+from motor.motor_asyncio import AsyncIOMotorClient
 
-DB_PATH = os.environ.get("DB_PATH", "tagmaster.db")
+logger = logging.getLogger(__name__)
 
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+DB_NAME   = os.environ.get("DB_NAME", "tagmaster")
 
-@contextmanager
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+_client: AsyncIOMotorClient = None
+_db = None
 
 
-def init_db():
-    with get_conn() as conn:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id    INTEGER PRIMARY KEY,
-                first_name TEXT,
-                username   TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS groups (
-                chat_id    INTEGER PRIMARY KEY,
-                title      TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS group_members (
-                chat_id    INTEGER,
-                user_id    INTEGER,
-                first_name TEXT,
-                PRIMARY KEY (chat_id, user_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS tag_states (
-                chat_id  INTEGER,
-                task_key TEXT,
-                state    TEXT DEFAULT 'idle',
-                PRIMARY KEY (chat_id, task_key)
-            );
-        """)
+def get_db():
+    """Return the motor database handle (call after init_db())."""
+    return _db
 
 
-def save_user(user_id: int, first_name: str, username: str = None):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO users (user_id, first_name, username) VALUES (?, ?, ?)",
-            (user_id, first_name, username),
-        )
+async def init_db():
+    """Connect to MongoDB and create indexes."""
+    global _client, _db
+    _client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=10_000)
+    _db = _client[DB_NAME]
+
+    # Indexes
+    await _db.users.create_index("user_id",  unique=True)
+    await _db.groups.create_index("chat_id", unique=True)
+    await _db.group_members.create_index([("chat_id", 1), ("user_id", 1)], unique=True)
+    await _db.tag_states.create_index([("chat_id", 1), ("task_key", 1)], unique=True)
+
+    logger.info("✅ MongoDB connected — database: %s", DB_NAME)
 
 
-def save_group(chat_id: int, title: str):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO groups (chat_id, title) VALUES (?, ?)",
-            (chat_id, title),
-        )
+# ── Users ─────────────────────────────────────────────────────────────────────
+
+async def save_user(user_id: int, first_name: str, username: str = None):
+    await _db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"first_name": first_name, "username": username}},
+        upsert=True,
+    )
 
 
-def save_member(chat_id: int, user_id: int, first_name: str):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO group_members (chat_id, user_id, first_name) VALUES (?, ?, ?)",
-            (chat_id, user_id, first_name),
-        )
+async def get_all_users() -> list[int]:
+    cursor = _db.users.find({}, {"user_id": 1, "_id": 0})
+    return [doc["user_id"] async for doc in cursor]
 
 
-def get_group_members(chat_id: int) -> list:
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT user_id, first_name FROM group_members WHERE chat_id = ?",
-            (chat_id,),
-        ).fetchall()
-    return [{"user_id": r["user_id"], "first_name": r["first_name"]} for r in rows]
+async def count_users() -> int:
+    return await _db.users.count_documents({})
 
 
-def get_stats() -> dict:
-    with get_conn() as conn:
-        users  = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        groups = conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]
+# ── Groups ────────────────────────────────────────────────────────────────────
+
+async def save_group(chat_id: int, title: str):
+    await _db.groups.update_one(
+        {"chat_id": chat_id},
+        {"$set": {"title": title}},
+        upsert=True,
+    )
+
+
+async def get_all_groups() -> list[int]:
+    cursor = _db.groups.find({}, {"chat_id": 1, "_id": 0})
+    return [doc["chat_id"] async for doc in cursor]
+
+
+async def count_groups() -> int:
+    return await _db.groups.count_documents({})
+
+
+# ── Group members ─────────────────────────────────────────────────────────────
+
+async def save_member(chat_id: int, user_id: int, first_name: str):
+    await _db.group_members.update_one(
+        {"chat_id": chat_id, "user_id": user_id},
+        {"$set": {"first_name": first_name}},
+        upsert=True,
+    )
+
+
+async def get_group_members(chat_id: int) -> list[dict]:
+    cursor = _db.group_members.find(
+        {"chat_id": chat_id},
+        {"user_id": 1, "first_name": 1, "_id": 0},
+    )
+    return [{"user_id": d["user_id"], "first_name": d["first_name"]} async for d in cursor]
+
+
+async def count_group_members(chat_id: int) -> int:
+    return await _db.group_members.count_documents({"chat_id": chat_id})
+
+
+# ── Tag states ────────────────────────────────────────────────────────────────
+
+async def set_tag_state(chat_id: int, task_key: str, state: str):
+    await _db.tag_states.update_one(
+        {"chat_id": chat_id, "task_key": task_key},
+        {"$set": {"state": state}},
+        upsert=True,
+    )
+
+
+async def get_tag_state(chat_id: int, task_key: str) -> str:
+    doc = await _db.tag_states.find_one(
+        {"chat_id": chat_id, "task_key": task_key},
+        {"state": 1, "_id": 0},
+    )
+    return doc["state"] if doc else "idle"
+
+
+# ── Stats ─────────────────────────────────────────────────────────────────────
+
+async def get_stats() -> dict:
+    users  = await count_users()
+    groups = await count_groups()
     return {"users": users, "groups": groups}
-
-
-def get_all_users() -> list:
-    with get_conn() as conn:
-        return [r[0] for r in conn.execute("SELECT user_id FROM users").fetchall()]
-
-
-def get_all_groups() -> list:
-    with get_conn() as conn:
-        return [r[0] for r in conn.execute("SELECT chat_id FROM groups").fetchall()]
-
-
-def set_tag_state(chat_id: int, task_key: str, state: str):
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO tag_states (chat_id, task_key, state) VALUES (?, ?, ?)",
-            (chat_id, task_key, state),
-        )
-
-
-def get_tag_state(chat_id: int, task_key: str) -> str:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT state FROM tag_states WHERE chat_id = ? AND task_key = ?",
-            (chat_id, task_key),
-        ).fetchone()
-    return row["state"] if row else "idle"
-
-
-# Auto-init on import
-init_db()
