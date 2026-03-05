@@ -1,39 +1,46 @@
 {
-  "name": "Advanced Telegram Tag Bot",
-  "description": "Multi-mode Telegram tagging bot with admin-only control, broadcast, stats, logging and rate-limit protection",
+  "name": "TagMaster Bot",
+  "description": "Telegram Group Tagging Bot — 8 modes, MongoDB, spam protection & admin controls",
+  "keywords": ["telegram", "bot", "tagging", "python", "mongodb"],
   "stack": "heroku-24",
-
   "env": {
-    "API_ID": {
-      "description": "Telegram API ID",
-      "required": true
-    },
-    "API_HASH": {
-      "description": "Telegram API HASH",
-      "required": true
-    },
     "BOT_TOKEN": {
-      "description": "Telegram Bot Token",
-      "required": true
-    },
-    "MONGO_URI": {
-      "description": "MongoDB connection string",
+      "description": "Your Telegram Bot Token — get from @BotFather on Telegram",
       "required": true
     },
     "OWNER_ID": {
-      "description": "Telegram user ID of bot owner",
+      "description": "Your Telegram User ID — get from @userinfobot on Telegram",
       "required": true
     },
-    "TAG_DELAY": {
-      "description": "Delay between tags in seconds",
-      "value": "4",
+    "MONGO_URI": {
+      "description": "MongoDB connection string — use MongoDB Atlas free tier: mongodb+srv://user:pass@cluster.mongodb.net/",
+      "required": true
+    },
+    "DB_NAME": {
+      "description": "MongoDB database name",
+      "value": "tagmaster",
+      "required": false
+    },
+    "UPDATES_CHANNEL": {
+      "description": "Your Telegram updates channel link",
+      "value": "https://t.me/yourchannel",
+      "required": false
+    },
+    "SUPPORT_GROUP": {
+      "description": "Your Telegram support group link",
+      "value": "https://t.me/yourgroup",
       "required": false
     }
   },
-
-  "process_types": {
+  "formation": {
     "worker": {
-      "command": "python app.py"
+      "quantity": 1,
+      "size": "eco"
     }
-  }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
 }
