@@ -27,7 +27,7 @@ WORKDIR /app
 COPY --from=builder /install/deps /usr/local
 
 # Copy bot source
-COPY bot.py database.py ./
+COPY bot.py database.py member_fetcher.py ./
 
 # Fix ownership
 RUN chown -R botuser:botuser /app
