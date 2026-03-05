@@ -36,7 +36,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from telegram.error import FloodWait, TelegramError, RetryAfter
+from telegram.error import TelegramError, RetryAfter
 from telegram.constants import ParseMode
 
 import database as db
@@ -191,13 +191,13 @@ async def safe_send(
     text: str,
     **kwargs,
 ):
-    """Send a message with automatic FloodWait / RetryAfter handling."""
+    """Send a message with automatic RetryAfter / TelegramError handling."""
     for attempt in range(6):
         try:
             return await context.bot.send_message(chat_id, text, **kwargs)
-        except (FloodWait, RetryAfter) as e:
-            wait = getattr(e, "retry_after", getattr(e, "value", 5))
-            logger.warning("FloodWait %ss — attempt %d/6", wait, attempt + 1)
+        except (RetryAfter,) as e:
+            wait = getattr(e, "retry_after", 5)
+            logger.warning("RetryAfter %ss — attempt %d/6", wait, attempt + 1)
             await asyncio.sleep(float(wait) + 1.5)
         except TelegramError as e:
             logger.error("TelegramError in safe_send to %s: %s", chat_id, e)
