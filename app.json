@@ -2,7 +2,7 @@
   "name": "TagMaster Bot",
   "description": "Telegram Group Tagging Bot — 8 modes, MongoDB, spam protection & admin controls",
   "keywords": ["telegram", "bot", "tagging", "python", "mongodb"],
-  "stack": "heroku-24",
+  "stack": "container"
   "env": {
     "BOT_TOKEN": {
       "description": "Your Telegram Bot Token — get from @BotFather on Telegram",
@@ -30,12 +30,6 @@
       "description": "Your Telegram support group link",
       "value": "https://t.me/yourgroup",
       "required": false
-    }
-  },
-  "formation": {
-    "worker": {
-      "quantity": 1,
-      "size": "eco"
     }
   },
   "buildpacks": [
