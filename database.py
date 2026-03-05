@@ -1,17 +1,6 @@
 """
-database.py  ──  MongoDB (motor async driver) for TagMaster Bot
-Collections:
-  • users         – every user who /start'd the bot
-  • groups        – every group the bot was added to
-  • group_members – members with Telegram status + last_fetch timestamp
-  • tag_states    – per-group running/paused/stopped state
-
-v3 additions:
-  • save_member_with_status()  — stores status_rank + status_label
-  • get_sorted_members()       — returns only rank 1-3, sorted by rank
-  • last_fetch field           — tracks when member data was last refreshed
+database.py — MongoDB async (motor) for TagMaster Bot
 """
-
 import os
 import logging
 from datetime import datetime, timezone
@@ -24,10 +13,6 @@ DB_NAME   = os.environ.get("DB_NAME", "tagmaster")
 
 _client = None
 _db     = None
-
-
-def get_db():
-    return _db
 
 
 async def init_db():
@@ -46,69 +31,72 @@ async def init_db():
     await _db.tag_states.create_index(
         [("chat_id", 1), ("task_key", 1)], unique=True
     )
-    logger.info("MongoDB connected — database: %s", DB_NAME)
+    logger.info("MongoDB connected: %s", DB_NAME)
 
 
-# Users
+# ── Users ─────────────────────────────────────────────────────────────────────
 
 async def save_user(user_id: int, first_name: str, username: str = None):
-    await _db.users.update_one(
-        {"user_id": user_id},
-        {"$set": {
+    update_doc = {
+        "$set": {
             "first_name": first_name,
-            "username":   username,
-            "last_seen":  datetime.now(timezone.utc),
-        }},
-        upsert=True,
-    )
+            "username": username,
+            "last_seen": datetime.now(timezone.utc),
+        }
+    }
+    await _db.users.update_one({"user_id": user_id}, update_doc, upsert=True)
 
 
 async def get_all_users() -> list:
-    return [doc["user_id"] async for doc in _db.users.find({}, {"user_id": 1, "_id": 0})]
+    cursor = _db.users.find({}, {"user_id": 1, "_id": 0})
+    return [doc["user_id"] async for doc in cursor]
 
 
 async def count_users() -> int:
     return await _db.users.count_documents({})
 
 
-# Groups
+# ── Groups ────────────────────────────────────────────────────────────────────
 
 async def save_group(chat_id: int, title: str):
-    await _db.groups.update_one(
-        {"chat_id": chat_id},
-        {"$set": {"title": title, "updated_at": datetime.now(timezone.utc)}},
-        upsert=True,
-    )
+    update_doc = {
+        "$set": {
+            "title": title,
+            "updated_at": datetime.now(timezone.utc),
+        }
+    }
+    await _db.groups.update_one({"chat_id": chat_id}, update_doc, upsert=True)
 
 
 async def get_all_groups() -> list:
-    return [doc["chat_id"] async for doc in _db.groups.find({}, {"chat_id": 1, "_id": 0})]
+    cursor = _db.groups.find({}, {"chat_id": 1, "_id": 0})
+    return [doc["chat_id"] async for doc in cursor]
 
 
 async def count_groups() -> int:
     return await _db.groups.count_documents({})
 
 
-# Group members - basic save (message tracking)
+# ── Group members — lightweight (message tracking) ────────────────────────────
 
 async def save_member(chat_id: int, user_id: int, first_name: str):
-    """Lightweight save triggered on every message. Does not overwrite status."""
-    await _db.group_members.update_one(
-        {"chat_id": chat_id, "user_id": user_id},
-        {
-            "$set":         {"first_name": first_name,
-                             "last_active": datetime.now(timezone.utc)},
-            "$setOnInsert": {
-                "status_rank":  99,
-                "status_label": "Unknown",
-                "last_fetch":   None,
-            },
+    """Called on every message. Does NOT overwrite status set by Pyrogram."""
+    query = {"chat_id": chat_id, "user_id": user_id}
+    update_doc = {
+        "$set": {
+            "first_name": first_name,
+            "last_active": datetime.now(timezone.utc),
         },
-        upsert=True,
-    )
+        "$setOnInsert": {
+            "status_rank": 99,
+            "status_label": "Unknown",
+            "last_fetch": None,
+        },
+    }
+    await _db.group_members.update_one(query, update_doc, upsert=True)
 
 
-# Group members - full save (from Pyrogram fetcher)
+# ── Group members — full save (from Pyrogram fetcher) ─────────────────────────
 
 async def save_member_with_status(
     chat_id: int,
@@ -118,49 +106,53 @@ async def save_member_with_status(
     status_rank: int = 99,
     status_label: str = "Unknown",
 ):
-    """Full save from Pyrogram — overwrites status fields."""
-    await _db.group_members.update_one(
-        {"chat_id": chat_id, "user_id": user_id},
-        {"$set": {
-            "first_name":   first_name,
-            "username":     username,
-            "status_rank":  status_rank,
+    """Called by Pyrogram member fetcher. Overwrites status fields."""
+    query = {"chat_id": chat_id, "user_id": user_id}
+    update_doc = {
+        "$set": {
+            "first_name": first_name,
+            "username": username,
+            "status_rank": status_rank,
             "status_label": status_label,
-            "last_fetch":   datetime.now(timezone.utc),
-        }},
-        upsert=True,
-    )
+            "last_fetch": datetime.now(timezone.utc),
+        }
+    }
+    await _db.group_members.update_one(query, update_doc, upsert=True)
 
 
 async def get_sorted_members(chat_id: int) -> list:
     """
-    Returns members sorted by status_rank ASC (online first).
-    Only rank 1 (online), 2 (recently), 3 (last week).
-    Excludes rank 99 (last month / long ago / unknown).
+    Returns members sorted online-first.
+    Rank 1 = online, 2 = recently, 3 = last week.
+    Rank 99 (inactive) is excluded.
     """
-    cursor = _db.group_members.find(
-        {"chat_id": chat_id, "status_rank": {"$in": [1, 2, 3]}},
-        {"user_id": 1, "first_name": 1, "status_rank": 1, "status_label": 1, "_id": 0},
-    ).sort("status_rank", 1)
-
-    return [
-        {
-            "user_id":      d["user_id"],
-            "first_name":   d["first_name"],
-            "status_rank":  d.get("status_rank", 99),
-            "status_label": d.get("status_label", "Unknown"),
-        }
-        async for d in cursor
-    ]
+    query  = {"chat_id": chat_id, "status_rank": {"$in": [1, 2, 3]}}
+    fields = {"user_id": 1, "first_name": 1, "status_rank": 1, "status_label": 1, "_id": 0}
+    cursor = _db.group_members.find(query, fields).sort("status_rank", 1)
+    result = []
+    async for doc in cursor:
+        result.append({
+            "user_id": doc["user_id"],
+            "first_name": doc["first_name"],
+            "status_rank": doc.get("status_rank", 99),
+            "status_label": doc.get("status_label", "Unknown"),
+        })
+    return result
 
 
 async def get_group_members(chat_id: int) -> list:
-    """Fallback: returns ALL tracked members sorted by rank."""
+    """Fallback: all tracked members, sorted by rank."""
     cursor = _db.group_members.find(
         {"chat_id": chat_id},
         {"user_id": 1, "first_name": 1, "status_rank": 1, "_id": 0},
     ).sort("status_rank", 1)
-    return [{"user_id": d["user_id"], "first_name": d["first_name"]} async for d in cursor]
+    result = []
+    async for doc in cursor:
+        result.append({
+            "user_id": doc["user_id"],
+            "first_name": doc["first_name"],
+        })
+    return result
 
 
 async def count_group_members(chat_id: int) -> int:
@@ -173,28 +165,23 @@ async def count_active_members(chat_id: int) -> int:
     )
 
 
-# Tag states
+# ── Tag states ────────────────────────────────────────────────────────────────
 
 async def set_tag_state(chat_id: int, task_key: str, state: str):
-    await _db.tag_states.update_one(
-        {"chat_id": chat_id, "task_key": task_key},
-        {"$set": {"state": state}},
-        upsert=True,
-    )
+    query      = {"chat_id": chat_id, "task_key": task_key}
+    update_doc = {"$set": {"state": state}}
+    await _db.tag_states.update_one(query, update_doc, upsert=True)
 
 
 async def get_tag_state(chat_id: int, task_key: str) -> str:
-    doc = await _db.tag_states.find_one(
-        {"chat_id": chat_id, "task_key": task_key},
-        {"state": 1, "_id": 0},
-    )
+    query = {"chat_id": chat_id, "task_key": task_key}
+    doc   = await _db.tag_states.find_one(query, {"state": 1, "_id": 0})
     return doc["state"] if doc else "idle"
 
 
-# Stats
+# ── Stats ─────────────────────────────────────────────────────────────────────
 
 async def get_stats() -> dict:
-    return {
-        "users":  await count_users(),
-        "groups": await count_groups(),
-    }}
+    users  = await count_users()
+    groups = await count_groups()
+    return {"users": users, "groups": groups}
