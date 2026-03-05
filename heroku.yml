@@ -1,5 +1,7 @@
 build:
   docker:
-    worker: Dockerfile
+    worker:
+      dockerfile: Dockerfile
+
 run:
-  worker: bash start
+  worker: python -u bot.py
