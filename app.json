@@ -1,19 +1,19 @@
 {
   "name": "TagMaster Bot",
-  "description": "Telegram Group Tagging Bot — 8 modes, MongoDB, spam protection & admin controls",
-  "keywords": ["telegram", "bot", "tagging", "python", "mongodb"],
-  "stack": "container"
+  "description": "Telegram Group Tagging Bot — 8 modes, MongoDB, spam protection & admin controls (Docker/Container Stack)",
+  "keywords": ["telegram", "bot", "tagging", "python", "mongodb", "docker"],
+  "stack": "container",
   "env": {
     "BOT_TOKEN": {
       "description": "Your Telegram Bot Token — get from @BotFather on Telegram",
       "required": true
     },
     "OWNER_ID": {
-      "description": "Your Telegram User ID — get from @userinfobot on Telegram",
+      "description": "Your Telegram User ID — get it by messaging @userinfobot on Telegram",
       "required": true
     },
     "MONGO_URI": {
-      "description": "MongoDB connection string — use MongoDB Atlas free tier: mongodb+srv://user:pass@cluster.mongodb.net/",
+      "description": "MongoDB Atlas URI — e.g. mongodb+srv://user:pass@cluster.mongodb.net/",
       "required": true
     },
     "DB_NAME": {
@@ -32,9 +32,10 @@
       "required": false
     }
   },
-  "buildpacks": [
-    {
-      "url": "heroku/python"
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "standard-2x"
     }
-  ]
+  }
 }
