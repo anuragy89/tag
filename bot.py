@@ -1,14 +1,13 @@
 """
 bot.py — TagMaster Bot v4
-Changes in v4:
-  - Tags ONE user per message with their name inside the text (human feel)
-  - No status/count messages before or during tagging — silent start
-  - Member fetch: Pyrogram first, then full MongoDB fallback (tags EVERYONE)
-  - /all and /admin keep 6-per-message bulk format (notification style)
-  - Only sends "tagging stopped/complete" at the very end
+- One message per user: mention on top, funny msg below (NO name repeated)
+- Silent start: no status/count messages
+- 3-tier member fetch: Pyrogram → DB cache → Bot API admins (never fails)
+- /all format: Name , Name , Name . (10 per message)
 """
 
 import os
+import re
 import asyncio
 import random
 import logging
@@ -52,115 +51,116 @@ if not BOT_OWNER:
     raise RuntimeError("OWNER_ID not set!")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Message pools  — every msg MUST contain {name} so the user feels called out
+# Message pools — NO {name} placeholders, mention is sent separately above msg
 # ─────────────────────────────────────────────────────────────────────────────
 
 HINDI_MSGS = [
-    "Aye {name} bhai! 👀 Tujhe yaad kiya maine, aa ja yaar! 🔥",
-    "Oye {name} ji! 😄 Kahan chhup gaye ho? Sab yaad kar rahe hain tumhe 💕",
-    "Dekho dekho! {name} ko bulaaya gaya hai 🎉 Aa ja bhai scene hai!",
-    "{name} bhaiya/didi! 🙏 Bahut yaad aayi aapki, please aa jao 🥺",
-    "Arre {name}! 😜 Itne sannate mein tujhe hi awaaz laga raha hoon!",
-    "Hey {name}! 😍 Tum bina group soona lagta hai yaar, aa jao please!",
-    "{name} ji 🌹 Aap jaisa koi nahi... bas aa jao na ek baar!",
-    "Oye {name}! 😂 Group mein teri bahut zaroorat hai, baith ja!",
-    "Arre yaar {name}! 💫 Tujhe tag kiya hai, ab aa ja warna mood kharaab hoga 😤",
-    "Heyy {name}! 😘 Miss kar raha hun tujhe, aa ja jaldi!",
-    "{name} bhai/didi 🤩 Scene hai aaj, miss mat karna!",
-    "Oye hoye {name}! 🎊 Aaj kuch maza hoga, aa ja!",
-    "{name}! 😎 Boss ne bulaya. Aa ja pehle.",
-    "Hey {name} 🌟 Tum group ki jaan ho... toh aa bhi jao!",
-    "{name} dost! 💌 Ek message toh maar, group ro raha hai tere bina!",
-    "Oye {name}! 🤭 Pata hai tu hi sabse zyada miss hota/hoti hai group mein?",
-    "{name}! 🫶 Teri smile miss karti hai group, aa ja na yaar!",
-    "{name} bhai/didi! 🔔 Tujhe ping kiya hai, sun le zara!",
+    "Tujhe yaad kiya maine, aa ja yaar! 🔥",
+    "Kahan chhup gaye ho? Sab yaad kar rahe hain tumhe 💕",
+    "Teri bahut zaroorat hai group mein, baith ja! 😂",
+    "Itne sannate mein tujhe hi awaaz laga raha hoon! 😜",
+    "Tum bina group soona lagta hai yaar, aa jao please! 😍",
+    "Aap jaisa koi nahi... bas aa jao na ek baar! 🌹",
+    "Tujhe tag kiya hai, ab aa ja warna mood kharaab hoga 😤💫",
+    "Miss kar raha hun tujhe, aa ja jaldi! 😘",
+    "Scene hai aaj, miss mat karna! 🤩",
+    "Oye hoye! Aaj kuch maza hoga, aa ja! 🎊",
+    "Boss ne bulaya. Aa ja pehle. 😎",
+    "Tum group ki jaan ho... toh aa bhi jao! 🌟",
+    "Ek message toh maar, group ro raha hai tere bina! 💌",
+    "Pata hai tu hi sabse zyada miss hota/hoti hai group mein? 🤭",
+    "Teri smile miss karti hai group, aa ja na yaar! 🫶",
+    "Tujhe ping kiya hai, sun le zara! 🔔",
+    "Kuch toh bol yaar, bahut time ho gaya! 🥺",
+    "Tere bina maza nahi aa raha, aa ja please! 💫",
 ]
 
 ENGLISH_MSGS = [
-    "Hey {name}! 👋 You're being summoned, don't ignore this! 😄",
-    "Psst... {name}! 👀 The group misses you, come on over! 💕",
-    "Attention {name}! 📢 Your presence is officially requested 😂",
-    "{name}! 🌟 You're the missing piece today, join in!",
-    "Yo {name}! 😎 Don't be a ghost, say something!",
-    "Hey {name}! 😍 You make this group 10x better, show up!",
-    "{name} babe! 😘 We can't start the party without you! 🎉",
-    "ALERT: {name} is needed ASAP! 🚨 Please report to the chat 😂",
-    "Hello gorgeous {name}! 💫 The group is calling your name!",
-    "{name}! 🔥 Stop lurking and start talking, we see you!",
-    "Paging {name}! 📞 You've got messages waiting!",
-    "Hey {name}! 🤩 Something fun is happening and you're missing it!",
-    "{name} sweetheart! 🥰 Just checking you're alive in there!",
-    "Oi {name}! 😜 Tag! You're it. Now respond!",
-    "{name}! ⭐ The squad needs you, no excuses!",
-    "Hey {name}! 🫂 A hug from the group — now come say hi!",
-    "Calling {name}! 📡 We know you're there, stop hiding! 😏",
-    "{name}! 💥 Boom, tagged. Your move now! 😂",
+    "You're being summoned, don't ignore this! 👋😄",
+    "The group misses you, come on over! 👀💕",
+    "Your presence is officially requested 📢😂",
+    "You're the missing piece today, join in! 🌟",
+    "Don't be a ghost, say something! 😎🔥",
+    "You make this group 10x better, show up! 😍",
+    "We can't start the party without you! 😘🎉",
+    "You're needed ASAP! Please report to the chat 🚨😂",
+    "The group is calling your name! 💫",
+    "Stop lurking and start talking, we see you! 🔥",
+    "You've got messages waiting! 📞",
+    "Something fun is happening and you're missing it! 🤩",
+    "Just checking you're alive in there! 🥰",
+    "Tag! You're it. Now respond! 😜",
+    "The squad needs you, no excuses! ⭐",
+    "A hug from the group — now come say hi! 🫂",
+    "We know you're there, stop hiding! 📡😏",
+    "Boom, tagged. Your move now! 💥😂",
 ]
 
 GM_MSGS = [
-    "Good Morning {name}! ☀️ Uth ja yaar, din shuru ho gaya! 😄",
-    "Goood Morniinggg {name}! 🌅 Chai pi li? Ya abhi bhi so raha/rahi hai? 😂",
-    "Subah subah {name} ko yaad kiya! 🌸 Have a fantastic day yaar!",
-    "GM {name}! 🌻 Aaj ka din tere liye ekdum mast rahega! ✨",
-    "Oye {name}! ☕ Uth ja, chai mentally ready hai 😂 Good Morning!",
-    "Rise and shine {name}! 🌈 Aaj kuch toh karo na yaar!",
-    "Hey {name}! 🐓 Murga bhi uth gaya, tu nahi uthega kya? GM! 😜",
-    "GM {name} ji! 🙏 Bhagwan kare aaj tera din bahut pyaara rahe! 💐",
-    "Subah bhi tujhe hi socha {name}! 🥰 Good Morning sweetheart!",
-    "Good Morning {name}! 🌞 Agenda for today: masti karo, mostly masti! 😄",
-    "{name}! 🦋 Naya din, nayi energy! GM bhai/didi!",
-    "Aye {name}! ⭐ Din shuru karo with full josh! Good Morning!",
-    "Wakey wakey {name}! 🌄 Duniya uth gayi, tu bhi aa ja!",
-    "Good Morning {name}! 🌺 Hope your day is as amazing as you are 😊",
+    "Good Morning! ☀️ Uth ja yaar, din shuru ho gaya! 😄",
+    "Goood Morniinggg! 🌅 Chai pi li? Ya abhi bhi so raha/rahi hai? 😂",
+    "Subah subah yaad kiya! 🌸 Have a fantastic day yaar!",
+    "GM! 🌻 Aaj ka din ekdum mast rahega! ✨",
+    "Uth ja, chai mentally ready hai 😂 Good Morning! ☕",
+    "Rise and shine! 🌈 Aaj kuch toh karo na yaar!",
+    "Murga bhi uth gaya, tu nahi uthega kya? GM! 🐓😜",
+    "GM ji! 🙏 Bhagwan kare aaj tera din bahut pyaara rahe! 💐",
+    "Good Morning! 🥰 Subah bhi tumhe hi socha!",
+    "Naya din, nayi energy! GM bhai/didi! 🦋",
+    "Din shuru karo with full josh! Good Morning! ⭐",
+    "Wakey wakey! 🌄 Duniya uth gayi, tu bhi aa ja!",
+    "Good Morning! 🌺 Hope your day is as amazing as you are 😊",
+    "Uthoooo! ☀️ Aaj ka din tum pe meherbaan hoga! 💫",
 ]
 
 GN_MSGS = [
-    "Good Night {name}! 🌙 So ja, bahut thak gaya/gayi hoga/hogi aaj! 💤",
-    "Raat ko bhi {name} yaad aaya/aayi! 🌟 Sweet dreams yaar!",
-    "GN {name}! 😴 Kal milenge, tab tak meethe sapne aa jayen! 💕",
-    "Hey {name}! 🌛 So ja ab, phone rakh! GN sweetheart!",
-    "Good Night {name}! 🌌 Kal phir scene hoga, aaj rest karo!",
-    "Oye {name}! 🛌 Raat ho gayi, so ja! Sweet dreams! 🌙",
-    "{name} ji! ⭐ Aaj ki raat peaceful ho tumhare liye! Good Night! 🤍",
-    "GN {name}! 🥱 Neend aa rahi hai? Toh so ja! Miss you already! 💫",
-    "Good Night {name}! 🌠 Sapno mein milenge! 😄",
-    "Sone se pehle {name} ko tag karna tha! 🌙 GN yaar, take care!",
-    "{name}! 🫶 Raat ki neend acchi ho, kal fresh aana! GN 💤",
-    "Shubh Ratri {name}! 🌛 Chand bhi so raha hai, tu bhi so ja! 😂",
+    "Good Night! 🌙 So ja, bahut thak gaya/gayi hoga/hogi aaj! 💤",
+    "Raat ko bhi yaad aaya/aayi! 🌟 Sweet dreams yaar!",
+    "GN! 😴 Kal milenge, tab tak meethe sapne aa jayen! 💕",
+    "So ja ab, phone rakh! GN sweetheart! 🌛",
+    "Good Night! 🌌 Kal phir scene hoga, aaj rest karo!",
+    "Raat ho gayi, so ja! Sweet dreams! 🛌🌙",
+    "Aaj ki raat peaceful ho tumhare liye! Good Night! ⭐🤍",
+    "GN! 🥱 Neend aa rahi hai? Toh so ja! Miss you already! 💫",
+    "Good Night! 🌠 Sapno mein milenge! 😄",
+    "So ja, kal phir baat karein! 🌙 GN yaar, take care!",
+    "Raat ki neend acchi ho, kal fresh aana! GN 💤🫶",
+    "Shubh Ratri! 🌛 Chand bhi so raha hai, tu bhi so ja! 😂",
 ]
 
 TAGALL_MSGS = [
-    "Aye {name}! 👀 Kahan ho? Group mein teri zaroorat hai! 😄",
-    "{name}! 🔥 Active ho jao yaar, kuch toh bolo!",
-    "Hey {name}! 😜 Tujhe tag kiya — iska matlab hai aana padega!",
-    "{name} ji! 🎭 Drama shuru hone wala hai, aa ja!",
-    "Oye {name}! 🤡 Tu hi toh life of the party hai, aa ja!",
-    "Psst {name}! 👻 Ghost mat ban, bol kuch na!",
-    "{name}! 💥 Boom! Tag ho gaya. Ab jawab de! 😂",
-    "Hello {name}! 🌟 Ek baar online aao na yaar please 🥺",
-    "{name}! 😎 Scene hai, miss mat karna!",
-    "Heyy {name}! 🎊 Party in the group, tu bhi aa!",
-    "{name} bhai/didi! 💫 Tum bina group adhura lagta hai!",
-    "Taggg {name}! 😘 Bas ek hello? Please?",
-    "{name}! 🎯 Targeted! Ab toh baat karo 😂",
-    "Yo {name}! 🫵 Haaan tujhe hi bol raha/rahi hun, aa ja na!",
-    "{name} yaar! 🤗 Kaafi time ho gaya, group miss kar raha hai tujhe!",
+    "Kahan ho? Group mein teri zaroorat hai! 👀😄",
+    "Active ho jao yaar, kuch toh bolo! 🔥",
+    "Tujhe tag kiya — iska matlab hai aana padega! 😜",
+    "Drama shuru hone wala hai, aa ja! 🎭",
+    "Tu hi toh life of the party hai, aa ja! 🤡",
+    "Ghost mat ban, bol kuch na! 👻",
+    "Boom! Tag ho gaya. Ab jawab de! 💥😂",
+    "Ek baar online aao na yaar please 🌟🥺",
+    "Scene hai, miss mat karna! 😎",
+    "Party in the group, tu bhi aa! 🎊",
+    "Tum bina group adhura lagta hai! 💫",
+    "Bas ek hello? Please? 😘",
+    "Targeted! Ab toh baat karo 🎯😂",
+    "Haaan tujhe hi bol raha/rahi hun, aa ja na! 🫵",
+    "Kaafi time ho gaya, group miss kar raha hai tujhe! 🤗",
 ]
 
 JTAG_MSGS = [
-    "{name} bhai/didi! 😂 Ye joke tere liye:\nQ: Homework kyun late tha?\nA: Kyunki baap ne time pe diya nahi! 😭",
-    "{name}! 🤣 Aaj ka joke:\nStudent: Sir main fail kyun hua?\nTeacher: Kyunki tum paas nahi aaye! 😂",
-    "{name}! 😜 Joke of the day:\nBanta: Meri biwi bahut seedhi hai\nSanta: Toh jhagda kaise?\nBanta: Main tircha hun! 🤣",
-    "{name}! 🤡 Chhota joke:\nDarzi: '3 din lagenge'\nMain: 'Theek hai, 3 saal baad aata hun' 😂",
-    "{name}! 😂 Gym wala:\nMaine 6 pack ke liye gym join kiya\nAb 1 pack bhi nahi hai 🍕",
-    "{name}! 🎭 Relatable:\nMaa: Beta padhai kar\nBeta: Kal karunga\nMaa: 3 saal se kal kal! 😭😂",
-    "{name}! 🤣 Sach baat:\nWake up 6 AM: Impossible ❌\nWake up 6 AM free food ke liye: Done ✅",
-    "{name} yaar! 😜 WiFi joke:\nNeighbour ka WiFi connected tha\nNeighbour: 'Bhai password change kar diya' 💀😂",
-    "{name}! 😂 Exam joke:\nPaper dekha toh aankh bhar aayi\nTeacher: Kyon ro rahe ho?\nYe sawaal toh mujhe bhi aata tha! 🤣",
-    "{name}! 🤡 Love joke:\nUsne kaha 'I love you'\nMaine kaha 'Proof do'\nUsne math ki copy dikhayi 😭😂",
+    "Ye joke tere liye 😂\nQ: Homework kyun late tha?\nA: Kyunki baap ne time pe diya nahi! 😭",
+    "Aaj ka joke 🤣\nStudent: Sir main fail kyun hua?\nTeacher: Kyunki tum paas nahi aaye! 😂",
+    "Sun sun! 😜\nBanta: Meri biwi bahut seedhi hai\nSanta: Toh jhagda kaise?\nBanta: Main tircha hun! 🤣",
+    "Chhota joke 🤡\nDarzi: 3 din lagenge\nMain: Theek hai, 3 saal baad aata hun 😂",
+    "Gym wala 😂\nMaine 6 pack ke liye gym join kiya\nAb 1 pack bhi nahi hai 🍕",
+    "Relatable 🎭\nMaa: Beta padhai kar\nBeta: Kal karunga\nMaa: 3 saal se kal kal! 😭😂",
+    "Sach baat 🤣\nWake up 6 AM: Impossible ❌\nWake up 6 AM free food ke liye: Done ✅",
+    "WiFi wala 😜\nNeighbour ka WiFi connected tha\nNeighbour: Bhai password change kar diya 💀😂",
+    "Exam joke 😂\nPaper dekha toh aankh bhar aayi\nTeacher: Kyon ro rahe ho?\nYe sawaal toh mujhe bhi aata tha! 🤣",
+    "Love joke 🤡\nUsne kaha 'I love you'\nMaine kaha 'Proof do'\nUsne math ki copy dikhayi 😭😂",
 ]
 
 ALL_TASK_KEYS = ["hitag", "entag", "gmtag", "gntag", "tagall", "jtag", "all_tag"]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -197,13 +197,44 @@ async def safe_send(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str,
 
 
 def _mention(user: dict) -> str:
-    uid   = user["user_id"]
-    name  = user.get("first_name", "User")
-    return f'<a href="tg://user?id={uid}">{name}</a>'
+    return f'<a href="tg://user?id={user["user_id"]}">{user.get("first_name", "User")}</a>'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Core tagging engine  — ONE user per message, name injected into text
+# Member fetch — 3 tiers, always returns someone to tag
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def get_members(chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> list:
+    """
+    Tier 1: Pyrogram (all members + status)
+    Tier 2: MongoDB cache (anyone who messaged)
+    Tier 3: Bot API get_chat_administrators (always works, no admin perm needed)
+    """
+    # Tier 1 + 2 via member_fetcher
+    members = await mf.get_members_for_tagging(chat_id)
+    if members:
+        return members
+
+    # Tier 3: Bot API admins — works even with zero messages tracked
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        members = [
+            {"user_id": a.user.id, "first_name": a.user.first_name or "Admin"}
+            for a in admins if not a.user.is_bot
+        ]
+        # Save to DB so future calls hit tier 2
+        for m in members:
+            await db.save_member(chat_id, m["user_id"], m["first_name"])
+        if members:
+            logger.info("Admin fallback: %d members for %s", len(members), chat_id)
+        return members
+    except TelegramError as e:
+        logger.warning("Admin fallback failed for %s: %s", chat_id, e)
+        return []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Core tagging loop — ONE message per user, mention on top, msg below
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _tagging_loop(
@@ -214,16 +245,9 @@ async def _tagging_loop(
     task_key: str,
     delay: float = 4.0,
 ):
-    """
-    Tags each member individually:
-      <mention>
-      random funny/flirty msg with their name
-    No status messages — just tags, one by one, like a human.
-    """
     await db.set_tag_state(chat_id, task_key, "running")
 
     for user in members:
-        # Check state before every single message
         state = await db.get_tag_state(chat_id, task_key)
 
         if state == "stopped":
@@ -237,21 +261,17 @@ async def _tagging_loop(
                 await safe_send(context, chat_id, "⛔ Tagging stopped.", parse_mode=ParseMode.HTML)
                 return
 
-        name = user.get("first_name", "User")
+        # Format: mention hyperlink on line 1, message on line 2
+        # Message has NO name — mention above is the tag
         mention = _mention(user)
-        # Inject the real first name into the message
-        msg = random.choice(msg_pool).replace("{name}", name)
+        msg = random.choice(msg_pool)
         text = f"{mention}\n{msg}"
 
         await safe_send(context, chat_id, text, parse_mode=ParseMode.HTML)
         await asyncio.sleep(delay)
 
     await db.set_tag_state(chat_id, task_key, "idle")
-    await safe_send(
-        context, chat_id,
-        "✅ Done! Everyone's been tagged 🎉",
-        parse_mode=ParseMode.HTML,
-    )
+    await safe_send(context, chat_id, "✅ Done! Everyone's been tagged 🎉", parse_mode=ParseMode.HTML)
 
 
 def _launch(context, chat_id, members, pool, key, delay=4.0):
@@ -265,7 +285,7 @@ def _launch(context, chat_id, members, pool, key, delay=4.0):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Generic tag command  — silent start, fetch members then go
+# Generic tag — silent start, 3-tier member fetch
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _generic_tag(
@@ -278,50 +298,38 @@ async def _generic_tag(
     if chat.type == "private":
         return await update.message.reply_text("⚠️ Use in groups only!")
     if not await is_admin(update, context):
-        return await update.message.reply_text("❌ Admins only!", parse_mode=ParseMode.HTML)
+        return await update.message.reply_text("❌ Admins only!")
     if await db.get_tag_state(chat.id, task_key) == "running":
         return await update.message.reply_text("⚠️ Already running! /stop first.")
 
-    # Fetch members silently (no message to user)
-    members = await mf.get_members_for_tagging(chat.id)
-
+    members = await get_members(chat.id, context)
     if not members:
-        return await update.message.reply_text(
-            "⚠️ No members found yet!\n"
-            "Ask members to send a message in the group so I can track them,\n"
-            "or make me admin so I can fetch the full member list.",
-        )
+        return  # stay completely silent if truly nothing found
 
-    # Silent start — no "starting…" message
     _launch(context, chat.id, members, msg_pool, task_key)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Tag commands
-# ─────────────────────────────────────────────────────────────────────────────
-
 async def hitag_cmd(update, context):
-    await _generic_tag(update, context, HINDI_MSGS,   "hitag")
+    await _generic_tag(update, context, HINDI_MSGS, "hitag")
 
 async def entag_cmd(update, context):
     await _generic_tag(update, context, ENGLISH_MSGS, "entag")
 
 async def gmtag_cmd(update, context):
-    await _generic_tag(update, context, GM_MSGS,      "gmtag")
+    await _generic_tag(update, context, GM_MSGS, "gmtag")
 
 async def gntag_cmd(update, context):
-    await _generic_tag(update, context, GN_MSGS,      "gntag")
+    await _generic_tag(update, context, GN_MSGS, "gntag")
 
 async def tagall_cmd(update, context):
-    pool = TAGALL_MSGS + HINDI_MSGS + ENGLISH_MSGS
-    await _generic_tag(update, context, pool,         "tagall")
+    await _generic_tag(update, context, TAGALL_MSGS + HINDI_MSGS + ENGLISH_MSGS, "tagall")
 
 async def jtag_cmd(update, context):
-    await _generic_tag(update, context, JTAG_MSGS,    "jtag")
+    await _generic_tag(update, context, JTAG_MSGS, "jtag")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# /admin  — bulk tag admins 6 per message (with custom msg above)
+# /admin — bulk tag admins, comma format
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _admin_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, custom_msg: str):
@@ -341,8 +349,8 @@ async def _admin_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, custom_
         return await update.message.reply_text("⚠️ No admins found!")
 
     header = f"📢 <b>{custom_msg}</b>\n\n" if custom_msg else "👮 <b>Attention Admins!</b>\n\n"
-    for chunk in chunk_list(admin_list, 6):
-        tags = " ".join(_mention(u) for u in chunk)
+    for chunk in chunk_list(admin_list, 10):
+        tags = " , ".join(_mention(u) for u in chunk) + " ."
         await safe_send(context, chat.id, f"{header}{tags}", parse_mode=ParseMode.HTML)
         await asyncio.sleep(2)
 
@@ -352,7 +360,7 @@ async def admin_tag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# /all  — bulk tag all members 6 per message (with custom msg above)
+# /all — comma format: Name , Name , Name .
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _all_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, custom_msg: str):
@@ -364,16 +372,16 @@ async def _all_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, custom_ms
     if await db.get_tag_state(chat.id, "all_tag") == "running":
         return await update.message.reply_text("⚠️ Already running! /stop first.")
 
-    members = await mf.get_members_for_tagging(chat.id)
+    members = await get_members(chat.id, context)
     if not members:
-        return await update.message.reply_text("⚠️ No members found yet!")
+        return
 
     header = f"📢 <b>{custom_msg}</b>\n\n" if custom_msg else None
 
     async def _run():
         await db.set_tag_state(chat.id, "all_tag", "running")
         try:
-            for chunk in chunk_list(members, 6):
+            for chunk in chunk_list(members, 10):
                 state = await db.get_tag_state(chat.id, "all_tag")
                 if state == "stopped":
                     await safe_send(context, chat.id, "⛔ Stopped.", parse_mode=ParseMode.HTML)
@@ -384,7 +392,8 @@ async def _all_tag(update: Update, context: ContextTypes.DEFAULT_TYPE, custom_ms
                     if state == "stopped":
                         await safe_send(context, chat.id, "⛔ Stopped.", parse_mode=ParseMode.HTML)
                         return
-                tags = " ".join(_mention(u) for u in chunk)
+                # Comma-separated format: Name , Name , Name .
+                tags = " , ".join(_mention(u) for u in chunk) + " ."
                 text = f"{header}{tags}" if header else tags
                 await safe_send(context, chat.id, text, parse_mode=ParseMode.HTML)
                 await asyncio.sleep(3)
@@ -409,9 +418,10 @@ async def text_trigger_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not update.message or not update.message.text:
         return
     t = update.message.text.strip()
-    if t.lower().startswith("@admin"):
+    tl = t.lower()
+    if tl.startswith("@admin"):
         await _admin_tag(update, context, t[6:].strip())
-    elif t.lower().startswith("@all"):
+    elif tl.startswith("@all"):
         await _all_tag(update, context, t[4:].strip())
 
 
@@ -427,7 +437,7 @@ async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("❌ Admins only!")
     for k in ALL_TASK_KEYS:
         await db.set_tag_state(chat.id, k, "stopped")
-    await update.message.reply_text("⛔ Tagging stopped!", parse_mode=ParseMode.HTML)
+    await update.message.reply_text("⛔ Tagging stopped!")
 
 
 async def pause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -441,8 +451,7 @@ async def pause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await db.get_tag_state(chat.id, k) == "running":
             await db.set_tag_state(chat.id, k, "paused")
             paused = True
-    msg = "⏸️ Paused! /resume to continue." if paused else "ℹ️ Nothing running."
-    await update.message.reply_text(msg)
+    await update.message.reply_text("⏸️ Paused! /resume to continue." if paused else "ℹ️ Nothing running.")
 
 
 async def resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -456,8 +465,7 @@ async def resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await db.get_tag_state(chat.id, k) == "paused":
             await db.set_tag_state(chat.id, k, "running")
             resumed = True
-    msg = "▶️ Resumed!" if resumed else "ℹ️ Nothing paused."
-    await update.message.reply_text(msg)
+    await update.message.reply_text("▶️ Resumed!" if resumed else "ℹ️ Nothing paused.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -505,23 +513,22 @@ HELP_TEXT = (
     "/gntag  — Good Night tags 🌙\n"
     "/tagall — Hinglish mix tags 🔥\n"
     "/jtag   — Joke tags 😂\n\n"
-    "<i>💡 Each member gets their own message with their name!</i>\n\n"
+    "<i>💡 Each user gets a personal mention + message!</i>\n\n"
     "<b>👑 Bulk Tag</b>\n\n"
-    "/admin &lt;msg&gt; — Tag all admins 👮 <i>(anyone can use)</i>\n"
+    "/admin &lt;msg&gt; — Tag all admins 👮\n"
     "/all &lt;msg&gt;   — Tag all members 📢 <i>(admins only)</i>\n"
-    "@admin / @all  — Same as above (plain text)\n\n"
+    "@admin / @all  — Same as above\n\n"
     "<b>⏸️ Controls</b> <i>(Admins only)</i>\n\n"
     "/stop   — Stop tagging 🛑\n"
     "/pause  — Pause tagging ⏸️\n"
     "/resume — Resume tagging ▶️\n\n"
     "<b>📊 Info</b>\n\n"
     "/stats  — Bot usage stats 📈\n"
-    "/help   — This menu ❓\n\n"
+    "/help   — This menu\n\n"
     "<b>👑 Owner Only</b>\n\n"
     "/broadcast &lt;msg&gt; — Broadcast to all\n\n"
     "━━━━━━━━━━━━━━━━━━━━━━━\n"
-    "<b>🟢 Tag Order:</b> Online → Recently → Last Week → Others\n"
-    "<i>Make bot admin for full member list access!</i>"
+    "<b>🟢 Tag Order:</b> Online → Recently → Last Week → Others"
 )
 
 
@@ -581,8 +588,8 @@ async def new_chat_member_handler(update: Update, context: ContextTypes.DEFAULT_
                 "🎉 <b>Thanks for adding me!</b>\n\n"
                 "I'm <b>TagMaster Bot</b> 🤖 — your smart group tagger!\n\n"
                 "📌 /help — see all commands\n\n"
-                "💡 <b>Make me admin</b> so I can fetch all members & tag everyone!\n\n"
-                "Ready to tag? Try /hitag 🔥",
+                "💡 <b>Make me admin</b> for full member list access!\n\n"
+                "Ready? Try /hitag 🔥",
                 parse_mode=ParseMode.HTML,
             )
 
@@ -615,7 +622,6 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text(
             "Usage: /broadcast &lt;message&gt;", parse_mode=ParseMode.HTML
         )
-
     bcast = " ".join(context.args)
     formatted = (
         "📢 <b>Message from Bot Owner</b>\n"
@@ -624,17 +630,12 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "<i>— TagMaster Bot</i>"
     )
-
     all_users  = await db.get_all_users()
     all_groups = await db.get_all_groups()
-
     status = await update.message.reply_text(
-        f"📤 Broadcasting to {len(all_users)} users + {len(all_groups)} groups...",
-        parse_mode=ParseMode.HTML,
+        f"📤 Broadcasting to {len(all_users)} users + {len(all_groups)} groups..."
     )
-
     su = fu = bu = sg = fg = 0
-
     for uid in all_users:
         try:
             await context.bot.send_message(uid, formatted, parse_mode=ParseMode.HTML)
@@ -647,13 +648,9 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(0.05)
         if (su + fu + bu) % 50 == 0:
             try:
-                await status.edit_text(
-                    f"📤 Users: ✔️{su} 🚫{bu} ❌{fu} — Groups pending...",
-                    parse_mode=ParseMode.HTML,
-                )
+                await status.edit_text(f"📤 Users: ✔️{su} 🚫{bu} ❌{fu} — Groups pending...")
             except TelegramError:
                 pass
-
     for gid in all_groups:
         try:
             await context.bot.send_message(gid, formatted, parse_mode=ParseMode.HTML)
@@ -661,20 +658,18 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except TelegramError:
             fg += 1
         await asyncio.sleep(0.1)
-
     await status.edit_text(
         "✅ <b>Broadcast Done!</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 Users  — ✔️ {su} | 🚫 {bu} blocked | ❌ {fu} failed\n"
         f"🏘️ Groups — ✔️ {sg} | ❌ {fg} failed\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📦 Total sent: <b>{su + sg}</b>",
+        f"📦 Total: <b>{su + sg}</b>",
         parse_mode=ParseMode.HTML,
     )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Activity tracker — save every user who messages in a group
+# Activity tracker
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def track_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -705,10 +700,6 @@ async def post_shutdown(app: Application):
     await mf.stop_pyro()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────────────────────────────────────
-
 def main():
     app = (
         Application.builder()
@@ -717,7 +708,6 @@ def main():
         .post_shutdown(post_shutdown)
         .build()
     )
-
     app.add_handler(CommandHandler("start",     start_cmd))
     app.add_handler(CommandHandler("help",      help_cmd))
     app.add_handler(CommandHandler("hitag",     hitag_cmd))
@@ -733,17 +723,14 @@ def main():
     app.add_handler(CommandHandler("resume",    resume_cmd))
     app.add_handler(CommandHandler("stats",     stats_cmd))
     app.add_handler(CommandHandler("broadcast", broadcast_cmd))
-
     app.add_handler(CallbackQueryHandler(help_callback,       pattern="^help_menu$"))
     app.add_handler(CallbackQueryHandler(back_start_callback, pattern="^back_start$"))
-
     app.add_handler(MessageHandler(
         filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND,
         text_trigger_handler,
     ))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_member_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, track_activity))
-
     logger.info("TagMaster Bot started...")
     app.run_polling(drop_pending_updates=True)
 
