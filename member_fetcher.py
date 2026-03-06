@@ -1,29 +1,24 @@
 """
-member_fetcher.py — Pyrogram MTProto member fetcher for TagMaster Bot
+member_fetcher.py — Smart member fetcher for TagMaster Bot
 
-Uses Pyrogram (MTProto) to fetch full group member lists and read
-UserStatus — something the Bot API cannot do.
+Priority order:
+  1. Pyrogram MTProto (gets ALL members + real UserStatus)
+  2. Bot API getChatAdministrators (at least gets admins)
+  3. MongoDB tracked members (everyone who ever messaged)
 
-If pyrogram is unavailable at runtime, all functions gracefully fall
-back to the message-tracked member list stored in MongoDB.
-
-Status rank:
-  1 = Online now        (tagged first)
-  2 = Recently online
-  3 = Last seen this week
-  99 = Older / unknown  (excluded from tagging)
+All members are stored in MongoDB. Tags ordered: Online > Recently > Last Week.
+Members inactive > 7 days are tagged last (not excluded — we tag everyone).
 """
 
 import os
 import logging
 import asyncio
-from datetime import datetime, timezone
 
 import database as db
 
 logger = logging.getLogger(__name__)
 
-# ── Optional Pyrogram import ──────────────────────────────────────────────────
+# ── Optional Pyrogram ─────────────────────────────────────────────────────────
 try:
     from pyrogram import Client
     from pyrogram.enums import UserStatus
@@ -34,176 +29,151 @@ try:
         PeerIdInvalid,
         RPCError,
     )
-    PYROGRAM_AVAILABLE = True
-    logger.info("Pyrogram available — smart member fetching enabled")
+    PYROGRAM_OK = True
+    logger.info("Pyrogram available ✅")
 except ImportError:
-    PYROGRAM_AVAILABLE = False
-    logger.warning(
-        "Pyrogram not installed — member fetching will use message-tracked "
-        "fallback only. Install pyrogram + tgcrypto to enable smart fetching."
-    )
+    PYROGRAM_OK = False
+    logger.warning("Pyrogram not installed — using message-tracked fallback")
 
-# ── Config ────────────────────────────────────────────────────────────────────
-API_ID    = int(os.environ.get("API_ID", "0"))
-API_HASH  = os.environ.get("API_HASH", "")
+API_ID    = int(os.environ.get("API_ID",  "0"))
+API_HASH  = os.environ.get("API_HASH",  "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
-_pyro_client = None
+_pyro: "Client | None" = None
+
+
+def _pyro_enabled() -> bool:
+    return PYROGRAM_OK and bool(API_ID) and bool(API_HASH)
 
 
 def get_pyro_client():
-    global _pyro_client
-    if not PYROGRAM_AVAILABLE:
+    global _pyro
+    if not _pyro_enabled():
         return None
-    if _pyro_client is None:
-        if not API_ID or not API_HASH:
-            logger.warning("API_ID/API_HASH not set — Pyrogram disabled")
-            return None
-        _pyro_client = Client(
+    if _pyro is None:
+        _pyro = Client(
             name="tagmaster_bot",
             api_id=API_ID,
             api_hash=API_HASH,
             bot_token=BOT_TOKEN,
             in_memory=True,
         )
-    return _pyro_client
+    return _pyro
 
 
 async def start_pyro():
-    client = get_pyro_client()
-    if client is None:
+    c = get_pyro_client()
+    if c is None:
         return
     try:
-        if not client.is_connected:
-            await client.start()
-            me = await client.get_me()
+        if not c.is_connected:
+            await c.start()
+            me = await c.get_me()
             logger.info("Pyrogram started — @%s", me.username)
     except Exception as e:
         logger.warning("Pyrogram start failed: %s", e)
 
 
 async def stop_pyro():
-    global _pyro_client
-    if _pyro_client is not None:
+    global _pyro
+    if _pyro is not None:
         try:
-            if _pyro_client.is_connected:
-                await _pyro_client.stop()
+            if _pyro.is_connected:
+                await _pyro.stop()
         except Exception:
             pass
 
 
-# ── Status helpers ────────────────────────────────────────────────────────────
+# ── Status rank helpers ───────────────────────────────────────────────────────
 
-def _status_rank(status) -> int:
-    if not PYROGRAM_AVAILABLE:
-        return 99
-    rank_map = {
-        UserStatus.ONLINE:      1,
-        UserStatus.RECENTLY:    2,
-        UserStatus.LAST_WEEK:   3,
-        UserStatus.LAST_MONTH:  99,
-        UserStatus.LONG_AGO:    99,
-        UserStatus.EMPTY:       99,
+def _rank(status) -> int:
+    if not PYROGRAM_OK:
+        return 50
+    m = {
+        UserStatus.ONLINE:     1,
+        UserStatus.RECENTLY:   2,
+        UserStatus.LAST_WEEK:  3,
+        UserStatus.LAST_MONTH: 50,
+        UserStatus.LONG_AGO:   90,
+        UserStatus.EMPTY:      50,
     }
-    return rank_map.get(status, 99)
+    return m.get(status, 50)
 
 
-def _status_label(status) -> str:
-    if not PYROGRAM_AVAILABLE:
-        return "Unknown"
-    labels = {
-        UserStatus.ONLINE:      "Online",
-        UserStatus.RECENTLY:    "Recently",
-        UserStatus.LAST_WEEK:   "Last week",
-        UserStatus.LAST_MONTH:  "Last month",
-        UserStatus.LONG_AGO:    "Long ago",
-        UserStatus.EMPTY:       "Unknown",
-    }
-    return labels.get(status, "Unknown")
+# ── Fetch via Pyrogram ────────────────────────────────────────────────────────
 
-
-# ── Core fetch ────────────────────────────────────────────────────────────────
-
-async def fetch_members(chat_id: int) -> dict:
+async def _fetch_via_pyrogram(chat_id: int) -> int:
     """
-    Fetch all members via Pyrogram and store in MongoDB with status.
-    Returns stats dict. Falls back gracefully if Pyrogram unavailable.
+    Uses Pyrogram to get ALL members + their UserStatus.
+    Returns count of members fetched. 0 = failed.
     """
-    stats = {"online": 0, "recently": 0, "last_week": 0, "excluded": 0, "total": 0, "fallback": False}
-
-    client = get_pyro_client()
-    if client is None:
-        stats["fallback"] = True
-        return stats
-
-    if not client.is_connected:
+    c = get_pyro_client()
+    if c is None:
+        return 0
+    if not c.is_connected:
         try:
-            await client.start()
+            await c.start()
         except Exception as e:
             logger.warning("Pyrogram reconnect failed: %s", e)
-            stats["fallback"] = True
-            return stats
+            return 0
 
+    count = 0
     try:
-        async for member in client.get_chat_members(chat_id):
+        async for member in c.get_chat_members(chat_id):
             user = member.user
-            if user.is_bot or user.is_deleted:
+            if not user or user.is_bot or user.is_deleted:
                 continue
-
             status = user.status or UserStatus.EMPTY
-            rank   = _status_rank(status)
-            label  = _status_label(status)
-            stats["total"] += 1
-
             await db.save_member_with_status(
                 chat_id=chat_id,
                 user_id=user.id,
                 first_name=user.first_name or "User",
                 username=user.username,
-                status_rank=rank,
-                status_label=label,
+                status_rank=_rank(status),
+                status_label=str(status),
             )
+            count += 1
+            await asyncio.sleep(0.005)
 
-            if rank == 1:
-                stats["online"] += 1
-            elif rank == 2:
-                stats["recently"] += 1
-            elif rank == 3:
-                stats["last_week"] += 1
-            else:
-                stats["excluded"] += 1
-
-            await asyncio.sleep(0.01)
-
-    except FloodWait as e:
-        logger.warning("FloodWait %ss fetching members for %s", e.value, chat_id)
-        await asyncio.sleep(e.value + 2)
-    except (ChatAdminRequired, ChannelPrivate, PeerIdInvalid) as e:
-        logger.warning("Cannot fetch members for %s: %s", chat_id, e)
-        stats["fallback"] = True
-    except RPCError as e:
-        logger.error("RPCError for %s: %s", chat_id, e)
-        stats["fallback"] = True
     except Exception as e:
-        logger.exception("Unexpected error fetching members for %s: %s", chat_id, e)
-        stats["fallback"] = True
+        if PYROGRAM_OK:
+            try:
+                fw = FloodWait
+                if isinstance(e, fw):
+                    logger.warning("FloodWait %ss", e.value)
+                    await asyncio.sleep(e.value + 2)
+            except Exception:
+                pass
+        logger.warning("Pyrogram fetch error for %s: %s", chat_id, e)
+        return count
 
-    return stats
+    logger.info("Pyrogram fetched %d members for chat %s", count, chat_id)
+    return count
 
 
-async def get_sorted_members(chat_id: int) -> tuple:
+# ── Main public function ──────────────────────────────────────────────────────
+
+async def get_members_for_tagging(chat_id: int) -> list:
     """
-    Returns (member_list, stats_dict).
-    Uses Pyrogram if available, falls back to cached MongoDB list.
+    Returns the full member list sorted for tagging:
+      Online (1) → Recently (2) → Last Week (3) → Others (50/90)
+
+    Strategy:
+      1. Try Pyrogram → gets everyone with real status
+      2. Fall back to message-tracked MongoDB list (anyone who ever chatted)
+
+    Never returns empty if any members are tracked.
     """
-    stats = await fetch_members(chat_id)
+    # Step 1 — try Pyrogram
+    fetched = await _fetch_via_pyrogram(chat_id)
 
-    # Get sorted active members from MongoDB
-    members = await db.get_sorted_members(chat_id)
+    if fetched > 0:
+        # Got fresh data — return ALL members sorted by status rank
+        members = await db.get_all_members_sorted(chat_id)
+        logger.info("Tagging %d members (Pyrogram) for chat %s", len(members), chat_id)
+        return members
 
-    # If Pyrogram got nothing (fallback), use all tracked members
-    if not members:
-        members = await db.get_group_members(chat_id)
-        stats["fallback"] = True
-
-    return members, stats
+    # Step 2 — fall back to message-tracked list from MongoDB
+    members = await db.get_group_members(chat_id)
+    logger.info("Tagging %d members (fallback cache) for chat %s", len(members), chat_id)
+    return members
