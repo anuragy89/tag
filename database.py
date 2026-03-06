@@ -185,3 +185,22 @@ async def get_stats() -> dict:
     users  = await count_users()
     groups = await count_groups()
     return {"users": users, "groups": groups}
+
+
+async def get_all_members_sorted(chat_id: int) -> list:
+    """
+    Returns ALL members sorted by status_rank ASC (online first).
+    Includes every rank — used after a successful Pyrogram fetch.
+    """
+    cursor = _db.group_members.find(
+        {"chat_id": chat_id},
+        {"user_id": 1, "first_name": 1, "status_rank": 1, "_id": 0},
+    ).sort("status_rank", 1)
+    result = []
+    async for doc in cursor:
+        result.append({
+            "user_id":     doc["user_id"],
+            "first_name":  doc["first_name"],
+            "status_rank": doc.get("status_rank", 50),
+        })
+    return result
