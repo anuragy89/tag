@@ -1,0 +1,75 @@
+{
+  "name": "Tag Master Bot",
+  "description": "Powerful Telegram tagging bot with 8 tag types, flood protection, and admin controls.",
+  "logo": "https://i.imgur.com/tagbot_logo.png",
+  "keywords": ["telegram", "bot", "tagging", "pyrogram"],
+  "repository": "https://github.com/yourusername/tagbot",
+  "env": {
+    "API_ID": {
+      "description": "Your Telegram API ID from https://my.telegram.org",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Your Telegram API Hash from https://my.telegram.org",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Bot token from @BotFather on Telegram",
+      "required": true
+    },
+    "OWNER_ID": {
+      "description": "Your Telegram user ID (get it from @userinfobot)",
+      "required": true
+    },
+    "MONGO_URI": {
+      "description": "MongoDB connection string (get free cluster at cloud.mongodb.com). Format: mongodb+srv://user:pass@cluster.mongodb.net",
+      "required": true
+    },
+    "MONGO_DB_NAME": {
+      "description": "MongoDB database name (default: tagbot)",
+      "required": false,
+      "value": "tagbot"
+    },
+    "UPDATES_CHANNEL": {
+      "description": "Link to your Telegram updates channel (e.g. https://t.me/mychannel)",
+      "required": false,
+      "value": "https://t.me/yourchannel"
+    },
+    "SUPPORT_GROUP": {
+      "description": "Link to your support group",
+      "required": false,
+      "value": "https://t.me/yoursupport"
+    },
+    "BOT_USERNAME": {
+      "description": "Your bot's username WITHOUT the @ symbol",
+      "required": false,
+      "value": "YourTagBot"
+    },
+    "TAG_DELAY": {
+      "description": "Seconds to wait between each individual tag message (default: 1.5)",
+      "required": false,
+      "value": "1.5"
+    },
+    "BATCH_DELAY": {
+      "description": "Seconds to wait between each 6-user batch (default: 3.0)",
+      "required": false,
+      "value": "3.0"
+    },
+    "USERS_PER_MSG": {
+      "description": "Mentions per message for /all and /admin tags (default: 6)",
+      "required": false,
+      "value": "6"
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "container"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
