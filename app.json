@@ -1,16 +1,15 @@
 {
   "name": "Tag Master Bot",
-  "description": "Powerful Telegram tagging bot with 8 tag types, flood protection, and admin controls.",
-  "logo": "https://i.imgur.com/tagbot_logo.png",
-  "keywords": ["telegram", "bot", "tagging", "pyrogram"],
+  "description": "Powerful Telegram tagging bot – 8 tag styles, flood protection, MongoDB, Heroku Standard 2X.",
+  "keywords": ["telegram", "bot", "tagging", "pyrogram", "mongodb"],
   "repository": "https://github.com/yourusername/tagbot",
   "env": {
     "API_ID": {
-      "description": "Your Telegram API ID from https://my.telegram.org",
+      "description": "Telegram API ID – get from https://my.telegram.org",
       "required": true
     },
     "API_HASH": {
-      "description": "Your Telegram API Hash from https://my.telegram.org",
+      "description": "Telegram API Hash – get from https://my.telegram.org",
       "required": true
     },
     "BOT_TOKEN": {
@@ -18,45 +17,50 @@
       "required": true
     },
     "OWNER_ID": {
-      "description": "Your Telegram user ID (get it from @userinfobot)",
+      "description": "Your Telegram numeric user ID (get from @userinfobot)",
       "required": true
     },
     "MONGO_URI": {
-      "description": "MongoDB connection string (get free cluster at cloud.mongodb.com). Format: mongodb+srv://user:pass@cluster.mongodb.net",
+      "description": "MongoDB Atlas connection URI. Format: mongodb+srv://user:pass@cluster.mongodb.net – free cluster at cloud.mongodb.com",
       "required": true
     },
     "MONGO_DB_NAME": {
-      "description": "MongoDB database name (default: tagbot)",
+      "description": "MongoDB database name",
       "required": false,
       "value": "tagbot"
     },
+    "BOT_USERNAME": {
+      "description": "Your bot username WITHOUT the @ symbol (e.g. MyTagBot)",
+      "required": false,
+      "value": "YourTagBot"
+    },
     "UPDATES_CHANNEL": {
-      "description": "Link to your Telegram updates channel (e.g. https://t.me/mychannel)",
+      "description": "Your Telegram updates channel link (e.g. https://t.me/mychannel)",
       "required": false,
       "value": "https://t.me/yourchannel"
     },
     "SUPPORT_GROUP": {
-      "description": "Link to your support group",
+      "description": "Your Telegram support group link",
       "required": false,
       "value": "https://t.me/yoursupport"
     },
-    "BOT_USERNAME": {
-      "description": "Your bot's username WITHOUT the @ symbol",
-      "required": false,
-      "value": "YourTagBot"
-    },
     "TAG_DELAY": {
-      "description": "Seconds to wait between each individual tag message (default: 1.5)",
+      "description": "Seconds between each tag message (default: 1.5)",
       "required": false,
       "value": "1.5"
     },
     "BATCH_DELAY": {
-      "description": "Seconds to wait between each 6-user batch (default: 3.0)",
+      "description": "Seconds between each 6-user batch for /all and /admin (default: 3.0)",
       "required": false,
       "value": "3.0"
     },
+    "FLOOD_SLEEP": {
+      "description": "Max seconds to sleep on Telegram FloodWait (default: 60)",
+      "required": false,
+      "value": "60"
+    },
     "USERS_PER_MSG": {
-      "description": "Mentions per message for /all and /admin tags (default: 6)",
+      "description": "Number of @mentions per message for /all and /admin (default: 6)",
       "required": false,
       "value": "6"
     }
@@ -64,7 +68,7 @@
   "formation": {
     "worker": {
       "quantity": 1,
-      "size": "container"
+      "size": "standard-2x"
     }
   },
   "buildpacks": [
