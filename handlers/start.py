@@ -3,7 +3,7 @@ handlers/start.py – /start command + inline button callbacks + group join even
 """
 
 import logging
-from pyrogram import Client, filters
+from pyrogram import Client
 from pyrogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton
