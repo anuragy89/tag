@@ -31,8 +31,7 @@ from utils import (
     ADMIN_TAG_SUFFIX,
     ALL_TAG_PREFIX,
     ALL_TAG_SUFFIX,
-    tag_manager,
-)
+    tag_manager)
 
 log = logging.getLogger(__name__)
 
@@ -48,8 +47,7 @@ async def _run_tag_loop(
     tag_type: str,
     session,
     progress_msg: Message,
-    custom_text: str = "",
-) -> None:
+    custom_text: str = "") -> None:
     total  = len(members)
     tagged = 0
     random.shuffle(members)
@@ -66,7 +64,7 @@ async def _run_tag_loop(
         # send with FloodWait retry
         for _ in range(4):
             try:
-                await client.send_message(chat_id, text, parse_mode="md")
+                await client.send_message(chat_id, text)
                 tagged += 1
                 break
             except FloodWait as e:
@@ -85,8 +83,7 @@ async def _run_tag_loop(
                 await progress_msg.edit_text(
                     f"🏷️ **Tagging in progress…**\n\n"
                     f"✅ Tagged : `{tagged}` / `{total}`\n"
-                    f"⚡ Use /stop or /pause to control.",
-                    parse_mode="md",
+                    f"⚡ Use /stop or /pause to control."
                 )
             except Exception:
                 pass
@@ -102,9 +99,9 @@ async def _run_tag_loop(
         )
 
     try:
-        await progress_msg.edit_text(finish, parse_mode="md")
+        await progress_msg.edit_text(finish)
     except Exception:
-        await safe_send(client, chat_id, finish, parse_mode="md")
+        await safe_send(client, chat_id, finish)
 
     tag_manager.stop(chat_id)
 
@@ -117,22 +114,19 @@ async def _generic_tagger(
     client: Client,
     message: Message,
     tag_type: str,
-    type_label: str,
-) -> None:
+    type_label: str) -> None:
     chat = message.chat
     await upsert_group(chat.id, chat.title, getattr(chat, "username", None))
 
     if tag_manager.is_active(chat.id):
         await message.reply_text(
             "⚠️ **A tagging session is already running!**\n\n"
-            "Use /stop first, then start a new one.",
-            parse_mode="md",
+            "Use /stop first, then start a new one."
         )
         return
 
     progress_msg = await message.reply_text(
-        f"⏳ **{type_label} initialising…**\n\nCollecting members — please wait.",
-        parse_mode="md",
+        f"⏳ **{type_label} initialising…**\n\nCollecting members — please wait."
     )
 
     members: list = []
@@ -142,16 +136,14 @@ async def _generic_tagger(
     if not members:
         await progress_msg.edit_text(
             "❌ No taggable members found.\n"
-            "_Make sure I have permission to view group members._",
-            parse_mode="md",
+            "_Make sure I have permission to view group members._"
         )
         return
 
     await progress_msg.edit_text(
         f"🚀 **{type_label} started!**\n\n"
         f"👥 Members found : `{len(members)}`\n"
-        f"⏸️ Use /pause · /resume · /stop to control.",
-        parse_mode="md",
+        f"⏸️ Use /pause · /resume · /stop to control."
     )
 
     session = tag_manager.start(chat.id)
@@ -223,8 +215,7 @@ async def cmd_admin_tag(client: Client, message: Message) -> None:
     custom = parts[1].strip() if len(parts) > 1 else ""
 
     progress_msg = await message.reply_text(
-        "📢 **Fetching admin list…** Please wait.",
-        parse_mode="md",
+        "📢 **Fetching admin list…** Please wait."
     )
 
     admins: list = []
@@ -249,7 +240,7 @@ async def cmd_admin_tag(client: Client, message: Message) -> None:
 
         for _ in range(4):
             try:
-                await client.send_message(chat.id, text, parse_mode="md")
+                await client.send_message(chat.id, text)
                 break
             except FloodWait as e:
                 await asyncio.sleep(e.value + 2)
@@ -279,14 +270,12 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
 
     if tag_manager.is_active(chat.id):
         await message.reply_text(
-            "⚠️ **Another tagging session is active.**\n\nUse /stop first.",
-            parse_mode="md",
+            "⚠️ **Another tagging session is active.**\n\nUse /stop first."
         )
         return
 
     progress_msg = await message.reply_text(
-        "⏳ **Collecting members…** Please wait.",
-        parse_mode="md",
+        "⏳ **Collecting members…** Please wait."
     )
 
     members: list = []
@@ -300,8 +289,7 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
     await progress_msg.edit_text(
         f"🚀 **All-Tag started!**\n\n"
         f"👥 Members found : `{len(members)}`\n"
-        f"⏸️ Use /pause · /resume · /stop to control.",
-        parse_mode="md",
+        f"⏸️ Use /pause · /resume · /stop to control."
     )
 
     session = tag_manager.start(chat.id)
@@ -326,7 +314,7 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
 
             for _ in range(4):
                 try:
-                    await client.send_message(chat.id, text, parse_mode="md")
+                    await client.send_message(chat.id, text)
                     batches_sent += 1
                     break
                 except FloodWait as e:
@@ -347,9 +335,9 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
         )
 
         try:
-            await progress_msg.edit_text(finish, parse_mode="md")
+            await progress_msg.edit_text(finish)
         except Exception:
-            await safe_send(client, chat.id, finish, parse_mode="md")
+            await safe_send(client, chat.id, finish)
 
         tag_manager.stop(chat.id)
 
