@@ -1,12 +1,16 @@
 """
-handlers/start.py – /start command + inline button callbacks + group join event.
+handlers/start.py – /start, /help, inline button callbacks, group join handler.
+parse_mode is set globally on the Client in bot.py — no per-call arg needed.
 """
 
 import logging
+
 from pyrogram import Client
 from pyrogram.types import (
-    Message, CallbackQuery,
-    InlineKeyboardMarkup, InlineKeyboardButton
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
 )
 
 from config import Config
@@ -15,33 +19,34 @@ from utils import GROUP_JOIN_MSG, safe_send
 
 log = logging.getLogger(__name__)
 
-# ── Keyboard factory ──────────────────────────────────────────────────────────
+
+# ── Keyboard helpers ──────────────────────────────────────────────────────────
 
 def main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
                 "➕ Add Me To Your Group",
-                url=f"https://t.me/{Config.BOT_USERNAME}?startgroup=true"
+                url=f"https://t.me/{Config.BOT_USERNAME}?startgroup=true",
             ),
         ],
         [
             InlineKeyboardButton("📋 Help & Commands", callback_data="cb_help"),
-            InlineKeyboardButton("📢 Updates",         url=Config.UPDATES_CHANNEL),
+            InlineKeyboardButton("📢 Updates", url=Config.UPDATES_CHANNEL),
         ],
         [
-            InlineKeyboardButton("💬 Support",         url=Config.SUPPORT_GROUP),
+            InlineKeyboardButton("💬 Support", url=Config.SUPPORT_GROUP),
         ],
     ])
 
 
 def back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔙 Back", callback_data="cb_back")
+        InlineKeyboardButton("🔙 Back", callback_data="cb_back"),
     ]])
 
 
-# ── Start message ─────────────────────────────────────────────────────────────
+# ── Message templates ─────────────────────────────────────────────────────────
 
 START_TEXT = """
 ╔══════════════════════════╗
@@ -50,7 +55,7 @@ START_TEXT = """
 
 👋 Hey **{name}**! Welcome!
 
-I'm the most powerful **Tagging Bot** on Telegram 🚀  
+I'm the most powerful **Tagging Bot** on Telegram 🚀
 Here's what I can do for you:
 
 🌟 **8 Tagging Styles**
@@ -80,19 +85,18 @@ HELP_TEXT = """
 
 🏷️ **Tagging Commands** _(Admins only)_
 
-`/hitag` — Tag all members in **Hindi** 🇮🇳
-`/entag` — Tag all members in **English** 🇬🇧
-`/gmtag` — **Good Morning** tag (Hinglish) 🌅
-`/gntag` — **Good Night** tag (Hinglish) 🌙
+`/hitag`  — Tag all members in **Hindi** 🇮🇳
+`/entag`  — Tag all members in **English** 🇬🇧
+`/gmtag`  — **Good Morning** tag (Hinglish) 🌅
+`/gntag`  — **Good Night** tag (Hinglish) 🌙
 `/tagall` — General tag, all members (Hinglish) 🔥
-`/jtag`  — **Joke** tag, all members (Hinglish) 😂
+`/jtag`   — **Joke** tag, all members (Hinglish) 😂
 
-🎯 **Mention Commands** _(Admins + Members)_
+🎯 **Mention Commands**
 
 `/admin` or `@admin` — Tag **only admins** (6 per msg)
 `/all`   or `@all`   — Tag **all members** (6 per msg)
-  _Both support custom messages:_
-  `@admin plz join vc` or `/all good morning!`
+  _Supports custom messages: `/admin plz join vc`_
 
 ⏸️ **Control Commands** _(Admins only)_
 
@@ -115,7 +119,7 @@ HELP_TEXT = """
 
 # ── Handler: /start ───────────────────────────────────────────────────────────
 
-async def cmd_start(client: Client, message: Message):
+async def cmd_start(client: Client, message: Message) -> None:
     if message.from_user:
         await upsert_user(
             message.from_user.id,
@@ -125,56 +129,54 @@ async def cmd_start(client: Client, message: Message):
     name = message.from_user.first_name if message.from_user else "Friend"
     await message.reply_text(
         START_TEXT.format(name=name),
-        parse_mode="md",
         reply_markup=main_keyboard(),
     )
 
 
 # ── Handler: /help ────────────────────────────────────────────────────────────
 
-async def cmd_help(client: Client, message: Message):
+async def cmd_help(client: Client, message: Message) -> None:
     await message.reply_text(
         HELP_TEXT,
-        parse_mode="md",
         reply_markup=back_keyboard(),
     )
 
 
-# ── Callback: inline buttons ──────────────────────────────────────────────────
+# ── Callback: inline keyboard buttons ────────────────────────────────────────
 
-async def callback_handler(client: Client, query: CallbackQuery):
+async def callback_handler(client: Client, query: CallbackQuery) -> None:
     data = query.data
 
     if data == "cb_help":
         await query.message.edit_text(
             HELP_TEXT,
-            parse_mode="md",
             reply_markup=back_keyboard(),
         )
-
     elif data == "cb_back":
         name = query.from_user.first_name if query.from_user else "Friend"
         await query.message.edit_text(
             START_TEXT.format(name=name),
-            parse_mode="md",
             reply_markup=main_keyboard(),
         )
 
     await query.answer()
 
 
-# ── Handler: bot added to group ───────────────────────────────────────────────
+# ── Handler: bot added to a group ────────────────────────────────────────────
 
-async def on_new_chat_member(client: Client, message: Message):
+async def on_new_chat_member(client: Client, message: Message) -> None:
     bot_me = await client.get_me()
     for member in message.new_chat_members:
         if member.id == bot_me.id:
             chat = message.chat
-            await upsert_group(chat.id, chat.title, getattr(chat, "username", None))
+            await upsert_group(
+                chat.id,
+                chat.title,
+                getattr(chat, "username", None),
+            )
             await safe_send(
                 client,
                 chat.id,
                 GROUP_JOIN_MSG.format(chat_title=chat.title or "this group"),
-                parse_mode="md",
             )
             break
