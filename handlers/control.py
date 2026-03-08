@@ -18,12 +18,12 @@ async def cmd_stop(client: Client, message: Message):
     if tag_manager.stop(chat_id):
         await message.reply_text(
             "🛑 **Tagging stopped!**\n\nAll ongoing tagging has been cancelled. ✅",
-            parse_mode="markdown"
+            parse_mode="md"
         )
     else:
         await message.reply_text(
             "ℹ️ No active tagging session to stop.",
-            parse_mode="markdown"
+            parse_mode="md"
         )
 
 
@@ -33,13 +33,13 @@ async def cmd_pause(client: Client, message: Message):
     if tag_manager.pause(chat_id):
         await message.reply_text(
             "⏸️ **Tagging paused!**\n\nUse /resume to continue where we left off.",
-            parse_mode="markdown"
+            parse_mode="md"
         )
     else:
         await message.reply_text(
             "ℹ️ No running tagging session to pause.\n"
             "_Session may already be paused or stopped._",
-            parse_mode="markdown"
+            parse_mode="md"
         )
 
 
@@ -49,11 +49,11 @@ async def cmd_resume(client: Client, message: Message):
     if tag_manager.resume(chat_id):
         await message.reply_text(
             "▶️ **Tagging resumed!**\n\nContinuing from where we left off… 🚀",
-            parse_mode="markdown"
+            parse_mode="md"
         )
     else:
         await message.reply_text(
             "ℹ️ Nothing to resume.\n"
             "_Start a tagging command first!_",
-            parse_mode="markdown"
+            parse_mode="md"
         )
