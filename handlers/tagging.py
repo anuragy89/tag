@@ -235,7 +235,7 @@ async def cmd_admin_tag(client: Client, message: Message) -> None:
         mentions = "\n".join(
             f"👤 {build_mention(uid, name)}" for uid, name in chunk
         )
-        header = f"💬 **{custom}**\n\n" if custom and idx == 0 else ""
+        header = f"💬 **{custom}**\n\n" if custom else ""
         text   = ADMIN_TAG_PREFIX + header + mentions + ADMIN_TAG_SUFFIX
 
         for _ in range(4):
@@ -309,7 +309,7 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
             mentions = "\n".join(
                 f"👤 {build_mention(uid, name)}" for uid, name in chunk
             )
-            header = f"💬 **{custom}**\n\n" if custom and idx == 0 else ""
+            header = f"💬 **{custom}**\n\n" if custom else ""
             text   = ALL_TAG_PREFIX + header + mentions + ALL_TAG_SUFFIX
 
             for _ in range(4):
