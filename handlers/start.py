@@ -72,9 +72,6 @@ Here's what I can do for you:
 🛡️ **Spam Protection**
    └ Built-in flood-wait guard
 
-📊 **Owner Tools**
-   └ /broadcast & /stats
-
 ━━━━━━━━━━━━━━━━━━━━━━━
 Pick an option below to get started! 👇
 """
@@ -103,11 +100,6 @@ HELP_TEXT = """
 `/stop`   — ❌ Stop ongoing tagging
 `/pause`  — ⏸️ Pause tagging temporarily
 `/resume` — ▶️ Resume paused tagging
-
-👑 **Owner Commands**
-
-`/broadcast <msg>` — Broadcast to all users & groups
-`/stats` — View bot usage statistics
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 💡 **Tips:**
