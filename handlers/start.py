@@ -15,7 +15,7 @@ from pyrogram.types import (
 
 from config import Config
 from database import upsert_user, upsert_group
-from utils import GROUP_JOIN_MSG, safe_send
+from utils import GROUP_JOIN_MSG
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +69,9 @@ Here's what I can do for you:
 🛡️ **Spam Protection**
    └ Built-in flood-wait guard
 
+📊 **Owner Tools**
+   └ /broadcast & /stats
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 Pick an option below to get started! 👇
 """
@@ -97,6 +100,11 @@ HELP_TEXT = """
 `/stop`   — ❌ Stop ongoing tagging
 `/pause`  — ⏸️ Pause tagging temporarily
 `/resume` — ▶️ Resume paused tagging
+
+👑 **Owner Commands**
+
+`/broadcast <msg>` — Broadcast to all users & groups
+`/stats` — View bot usage statistics
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 💡 **Tips:**
@@ -163,9 +171,24 @@ async def on_new_chat_member(client: Client, message: Message) -> None:
                 chat.title,
                 getattr(chat, "username", None),
             )
-            await safe_send(
-                client,
-                chat.id,
-                GROUP_JOIN_MSG.format(chat_title=chat.title or "this group"),
-            )
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "➕ Add to Your Group",
+                        url=f"https://t.me/{Config.BOT_USERNAME}?startgroup=true",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton("📋 Help & Commands", callback_data="cb_help"),
+                    InlineKeyboardButton("📢 Updates", url=Config.UPDATES_CHANNEL),
+                ],
+            ])
+            try:
+                await client.send_message(
+                    chat.id,
+                    GROUP_JOIN_MSG.format(chat_title=chat.title or "this group"),
+                    reply_markup=keyboard,
+                )
+            except Exception as e:
+                log.warning("Could not send group join msg to %s: %s", chat.id, e)
             break
