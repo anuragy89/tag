@@ -32,6 +32,7 @@ from utils import (
     ALL_TAG_PREFIX,
     ALL_TAG_SUFFIX,
     tag_manager)
+from utils.botapi import te
 
 log = logging.getLogger(__name__)
 
@@ -81,21 +82,24 @@ async def _run_tag_loop(
         if tagged > 0 and tagged % 10 == 0:
             try:
                 await progress_msg.edit_text(
-                    f"🏷️ **Tagging in progress…**\n\n"
+                    f"{te('tag','🏷️')} **Tagging in progress…**\n\n"
                     f"✅ Tagged : `{tagged}` / `{total}`\n"
-                    f"⚡ Use /stop or /pause to control."
+                    f"{te('lightning','⚡')} Use /stop or /pause to control."
                 )
             except Exception:
                 pass
 
     # completion message
     if session.is_stopped:
-        finish = f"🛑 **Tagging stopped!**\nTagged `{tagged}` out of `{total}` members."
+        finish = (
+            f"{te('stop','🛑')} **Tagging stopped!**\n"
+            f"Tagged `{tagged}` out of `{total}` members."
+        )
     else:
         finish = (
-            f"✅ **Tagging complete!**\n\n"
+            f"{te('check','✅')} **Tagging complete!**\n\n"
             f"👥 Total tagged : `{tagged}` / `{total}`\n"
-            f"🎉 All done! Great success!"
+            f"{te('tada','🎉')} All done! Great success!"
         )
 
     try:
@@ -120,7 +124,7 @@ async def _generic_tagger(
 
     if tag_manager.is_active(chat.id):
         await message.reply_text(
-            "⚠️ **A tagging session is already running!**\n\n"
+            f"{te('warning','⚠️')} **A tagging session is already running!**\n\n"
             "Use /stop first, then start a new one."
         )
         return
@@ -135,15 +139,15 @@ async def _generic_tagger(
 
     if not members:
         await progress_msg.edit_text(
-            "❌ No taggable members found.\n"
+            f"{te('cross','❌')} No taggable members found.\n"
             "_Make sure I have permission to view group members._"
         )
         return
 
     await progress_msg.edit_text(
-        f"🚀 **{type_label} started!**\n\n"
+        f"{te('rocket','🚀')} **{type_label} started!**\n\n"
         f"👥 Members found : `{len(members)}`\n"
-        f"⏸️ Use /pause · /resume · /stop to control."
+        f"{te('lightning','⚡')} Use /pause · /resume · /stop to control."
     )
 
     session = tag_manager.start(chat.id)
@@ -223,7 +227,7 @@ async def cmd_admin_tag(client: Client, message: Message) -> None:
         admins.append((uid, name))
 
     if not admins:
-        await progress_msg.edit_text("❌ No admins found in this group.")
+        await progress_msg.edit_text(f"{te('cross','❌')} No admins found in this group.")
         return
 
     chunks = [
@@ -283,7 +287,7 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
         members.append((uid, name))
 
     if not members:
-        await progress_msg.edit_text("❌ No members found.")
+        await progress_msg.edit_text(f"{te('cross','❌')} No members found.")
         return
 
     await progress_msg.edit_text(
@@ -327,11 +331,11 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
 
         total_tagged = batches_sent * Config.USERS_PER_MSG
         finish = (
-            f"🛑 **All-tag stopped!** Sent `{batches_sent}` batches (~{total_tagged} users)."
+            f"{te('stop','🛑')} **All-tag stopped!** Sent `{batches_sent}` batches (~{total_tagged} users)."
             if session.is_stopped
             else
             f"✅ **All-tag complete!**\n\n"
-            f"📣 Reached ~`{total_tagged}` members in `{batches_sent}` messages. 🎉"
+            f"{te('bell','📣')} Reached ~`{total_tagged}` members in `{batches_sent}` messages. {te('tada','🎉')}"
         )
 
         try:
