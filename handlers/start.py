@@ -31,7 +31,7 @@ def _styled_main_kb() -> list:
         [_btn("➕ Add to Your Group", "add",
               url=f"https://t.me/{Config.BOT_USERNAME}?startgroup=true",
               style="danger")],
-        [_btn("📋 Help & Commands", "help",
+        [_btn("📋 Help ", "help",
               callback_data="cb_help", style="primary"),
          _btn("📢 Updates", "updates",
               url=Config.UPDATES_CHANNEL, style="primary")],
@@ -48,7 +48,7 @@ def _styled_group_kb() -> list:
         [_btn("➕ Add to Your Group", "add",
               url=f"https://t.me/{Config.BOT_USERNAME}?startgroup=true",
               style="danger")],
-        [_btn("📋 Help & Commands", "help",
+        [_btn("📋 Help ", "help",
               callback_data="cb_help", style="primary"),
          _btn("📢 Updates", "updates",
               url=Config.UPDATES_CHANNEL, style="primary")],
@@ -62,7 +62,7 @@ def _fallback_main_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add to Your Group",
                               url=f"https://t.me/{Config.BOT_USERNAME}?startgroup=true")],
-        [InlineKeyboardButton("📋 Help & Commands", callback_data="cb_help"),
+        [InlineKeyboardButton("📋 Help ", callback_data="cb_help"),
          InlineKeyboardButton("📢 Updates", url=Config.UPDATES_CHANNEL)],
         [InlineKeyboardButton("💬 Support", url=Config.SUPPORT_GROUP)],
     ])
@@ -225,7 +225,7 @@ async def on_new_chat_member(client: Client, message: Message) -> None:
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("➕ Add to Your Group",
                                          url=f"https://t.me/{Config.BOT_USERNAME}?startgroup=true")],
-                    [InlineKeyboardButton("📋 Help & Commands", callback_data="cb_help"),
+                    [InlineKeyboardButton("📋 Help ", callback_data="cb_help"),
                      InlineKeyboardButton("📢 Updates", url=Config.UPDATES_CHANNEL)],
                     [InlineKeyboardButton("💬 Support", url=Config.SUPPORT_GROUP)],
                 ])
