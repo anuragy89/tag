@@ -31,3 +31,16 @@ class Config:
     UPDATES_CHANNEL = os.environ.get("UPDATES_CHANNEL", "https://t.me/yourchannel")
     SUPPORT_GROUP   = os.environ.get("SUPPORT_GROUP",   "https://t.me/yoursupport")
     BOT_USERNAME    = os.environ.get("BOT_USERNAME",    "YourTagBot")
+
+    # ── Premium Emoji IDs for inline keyboard button icons ────────────────────
+    # These are Telegram document IDs for animated premium emoji.
+    # Run  python fetch_emoji_ids.py  once to find real IDs, then paste below.
+    # Works because your bot owner account has Telegram Premium.
+    # Set to "" to show that button without an emoji icon (no crash).
+    PREMIUM_EMOJI = {
+        "add":     "",   # ➕  Add to Your Group  button  (style: danger/red)
+        "help":    "",   # 📋  Help & Commands    button  (style: primary/blue)
+        "updates": "",   # 📢  Updates            button  (style: primary/blue)
+        "support": "",   # 💬  Support            button  (style: success/green)
+        "back":    "",   # 🔙  Back               button  (style: primary/blue)
+    }
