@@ -21,7 +21,7 @@ from pyrogram.types import (
 from config import Config
 from database import upsert_user, upsert_group
 from utils import GROUP_JOIN_MSG
-from utils.botapi import send_styled, edit_styled
+from utils.botapi import send_styled, edit_styled, _btn
 
 log = logging.getLogger(__name__)
 
@@ -34,69 +34,47 @@ log = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _styled_main_kb() -> list:
-    """Main /start keyboard with colored buttons (Bot API 9.4 style field)."""
+    """Main /start keyboard with colored + premium emoji buttons."""
     return [
         [
-            {
-                "text":  "➕ Add to Your Group",
-                "url":   f"https://t.me/{Config.BOT_USERNAME}?startgroup=true",
-                "style": "danger",          # 🔴 red
-            }
+            _btn("➕ Add to Your Group", "add",
+                 url=f"https://t.me/{Config.BOT_USERNAME}?startgroup=true",
+                 style="danger"),
         ],
         [
-            {
-                "text":          "📋 Help & Commands",
-                "callback_data": "cb_help",
-                "style":         "primary",  # 🔵 blue
-            },
-            {
-                "text":  "📢 Updates",
-                "url":   Config.UPDATES_CHANNEL,
-                "style": "primary",          # 🔵 blue
-            },
+            _btn("📋 Help & Commands", "help",
+                 callback_data="cb_help", style="primary"),
+            _btn("📢 Updates", "updates",
+                 url=Config.UPDATES_CHANNEL, style="primary"),
         ],
         [
-            {
-                "text":  "💬 Support",
-                "url":   Config.SUPPORT_GROUP,
-                "style": "success",          # 🟢 green
-            }
+            _btn("💬 Support", "support",
+                 url=Config.SUPPORT_GROUP, style="success"),
         ],
     ]
 
 
 def _styled_back_kb() -> list:
-    return [[{"text": "🔙 Back", "callback_data": "cb_back", "style": "primary"}]]
+    return [[_btn("🔙 Back", "back", callback_data="cb_back", style="primary")]]
 
 
 def _styled_group_kb() -> list:
     """Welcome keyboard shown when bot is added to a group."""
     return [
         [
-            {
-                "text":  "➕ Add to Your Group",
-                "url":   f"https://t.me/{Config.BOT_USERNAME}?startgroup=true",
-                "style": "danger",          # 🔴 red
-            }
+            _btn("➕ Add to Your Group", "add",
+                 url=f"https://t.me/{Config.BOT_USERNAME}?startgroup=true",
+                 style="danger"),
         ],
         [
-            {
-                "text":          "📋 Help & Commands",
-                "callback_data": "cb_help",
-                "style":         "primary",  # 🔵 blue
-            },
-            {
-                "text":  "📢 Updates",
-                "url":   Config.UPDATES_CHANNEL,
-                "style": "primary",          # 🔵 blue
-            },
+            _btn("📋 Help & Commands", "help",
+                 callback_data="cb_help", style="primary"),
+            _btn("📢 Updates", "updates",
+                 url=Config.UPDATES_CHANNEL, style="primary"),
         ],
         [
-            {
-                "text":  "💬 Support",
-                "url":   Config.SUPPORT_GROUP,
-                "style": "success",          # 🟢 green
-            }
+            _btn("💬 Support", "support",
+                 url=Config.SUPPORT_GROUP, style="success"),
         ],
     ]
 
@@ -122,6 +100,9 @@ def _fallback_back_kb() -> InlineKeyboardMarkup:
 # ══════════════════════════════════════════════════════════════════════════════
 
 START_TEXT = """
+╔══════════════════════════╗
+║   🏷️  **TAG MASTER BOT**  ║
+╚══════════════════════════╝
 
 👋 Hey **{name}**! Welcome!
 
@@ -141,6 +122,9 @@ Here's what I can do for you:
 
 🛡️ **Spam Protection**
    └ Built-in flood-wait guard
+
+📊 **Owner Tools**
+   └ /broadcast & /stats
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 Pick an option below to get started! 👇
