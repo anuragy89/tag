@@ -79,16 +79,22 @@ def code(text: str) -> str:
 def _btn(text: str, emoji_key: str = "", **kwargs) -> dict:
     """
     Build one InlineKeyboardButton dict.
-    Auto-adds icon_custom_emoji_id when a non-empty ID is set in config.
-
-    _btn("➕ Add to Group", "add", url="...", style="danger")
-    _btn("📋 Help",        "help", callback_data="cb_help", style="primary")
+    • Adds icon_custom_emoji_id when a non-empty ID is configured.
+    • When icon IS set: strips the leading emoji from button text so it
+      doesn't appear twice (Telegram renders icon + text side by side).
+    • When icon NOT set: keeps emoji in text as visual fallback.
     """
     button = {"text": text, **kwargs}
     if emoji_key:
         doc_id = Config.PREMIUM_EMOJI.get(emoji_key, "")
         if doc_id:
             button["icon_custom_emoji_id"] = doc_id
+            # Drop leading non-ASCII chars (emoji) until first real letter/digit
+            i = 0
+            for i, ch in enumerate(text):
+                if ch.isascii() and (ch.isalpha() or ch.isdigit()):
+                    break
+            button["text"] = text[i:].strip()
     return button
 
 
