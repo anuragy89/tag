@@ -41,6 +41,24 @@ log = logging.getLogger(__name__)
 _BASE = f"https://api.telegram.org/bot{Config.BOT_TOKEN}"
 
 
+def _btn(text: str, emoji_key: str = "", **kwargs) -> dict:
+    """
+    Build one InlineKeyboardButton dict.
+    Automatically adds icon_custom_emoji_id when a non-empty ID is configured
+    in Config.PREMIUM_EMOJI for the given emoji_key.
+
+    Usage:
+        _btn("➕ Add to Group", "add", url="...", style="danger")
+        _btn("📋 Help",        "help", callback_data="cb_help", style="primary")
+    """
+    button = {"text": text, **kwargs}
+    if emoji_key:
+        doc_id = Config.PREMIUM_EMOJI.get(emoji_key, "")
+        if doc_id:
+            button["icon_custom_emoji_id"] = doc_id
+    return button
+
+
 async def _call(method: str, payload: dict) -> Optional[dict]:
     """POST one Bot API method and return the result dict, or None on error."""
     url = f"{_BASE}/{method}"
