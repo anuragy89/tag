@@ -361,8 +361,8 @@ ADMIN_TAG_SUFFIX = "\n\n⚠️ _Please attend to the matter above._"
 # ══════════════════════════════════════════════════════════════════════════════
 #  8.  ALL TAG  –  prefix when tagging everyone
 # ══════════════════════════════════════════════════════════════════════════════
-ALL_TAG_PREFIX = "📣 **Attention Everyone!**\n\n"
-ALL_TAG_SUFFIX = "\n\n👆 _Please check the message above!_"
+ALL_TAG_PREFIX = "**\n\n"
+ALL_TAG_SUFFIX = "\n\n"
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Welcome messages
