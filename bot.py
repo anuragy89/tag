@@ -85,9 +85,9 @@ async def main() -> None:
     # ── 4. Register all handlers ──────────────────────────────────────────────
     G = filters.group
 
-    # /start — private DM only
+    # /start — works everywhere (private DM and groups)
     app.add_handler(MessageHandler(
-        cmd_start, filters.command("start") & filters.private
+        cmd_start, filters.command("start")
     ))
     # /help — works anywhere
     app.add_handler(MessageHandler(cmd_help, filters.command("help")))
