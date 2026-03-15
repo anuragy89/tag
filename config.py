@@ -38,9 +38,9 @@ class Config:
     # Works because your bot owner account has Telegram Premium.
     # Set to "" to show that button without an emoji icon (no crash).
     PREMIUM_EMOJI = {
-        "add":     "",   # ➕  Add to Your Group  button  (style: danger/red)
-        "help":    "",   # 📋  Help & Commands    button  (style: primary/blue)
-        "updates": "",   # 📢  Updates            button  (style: primary/blue)
-        "support": "",   # 💬  Support            button  (style: success/green)
-        "back":    "",   # 🔙  Back               button  (style: primary/blue)
+        "add":     "5339085583803244634",   # ➕  Add to Your Group  button  (style: danger/red)
+        "help":    "5972302069770488984",   # 📋  Help & Commands    button  (style: primary/blue)
+        "updates": "5971885530957222021",   # 📢  Updates            button  (style: primary/blue)
+        "support": "5971831809506282660",   # 💬  Support            button  (style: success/green)
+        "back":    "5352759161945867747",   # 🔙  Back               button  (style: primary/blue)
     }
