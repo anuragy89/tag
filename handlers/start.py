@@ -240,11 +240,11 @@ async def on_new_chat_member(client: Client, message: Message) -> None:
                 chat.id,
                 text,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("➕ Add to Your Group",
+                    [InlineKeyboardButton(" Add to Your Group",
                                          url=f"https://t.me/{Config.BOT_USERNAME}?startgroup=true")],
-                    [InlineKeyboardButton("📋 Help ", callback_data="cb_help"),
-                     InlineKeyboardButton("📢 Updates", url=Config.UPDATES_CHANNEL)],
-                    [InlineKeyboardButton("💬 Support", url=Config.SUPPORT_GROUP)],
+                    [InlineKeyboardButton(" Help ", callback_data="cb_help"),
+                     InlineKeyboardButton(" Updates", url=Config.UPDATES_CHANNEL)],
+                    [InlineKeyboardButton(" Support", url=Config.SUPPORT_GROUP)],
                 ])
             )
         except Exception as e:
