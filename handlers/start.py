@@ -79,6 +79,7 @@ def _fallback_back_kb() -> InlineKeyboardMarkup:
 
 def start_text(name: str) -> str:
     return (
+       
         f"{te('wave','👋')} Hey <b>{name}</b>! Welcome!\n\n"
         f"I'm the most powerful <b>Tagging Bot</b> on Telegram "
         f"{te('rocket','🚀')}\n\n"
@@ -93,8 +94,6 @@ def start_text(name: str) -> str:
         f"   └ Only admins can control tagging\n\n"
         f"{te('shield','🛡️')} <b>Spam Protection</b>\n"
         f"   └ Built-in flood-wait guard\n\n"
-        f"{te('chart','📊')} <b>Owner Tools</b>\n"
-       
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Pick an option below to get started! {te('sparkle','✨')}"
     )
@@ -110,7 +109,8 @@ def help_text() -> str:
         f"<code>/gmtag</code>  — <b>Good Morning</b> tag (Hinglish) 🌅\n"
         f"<code>/gntag</code>  — <b>Good Night</b> tag (Hinglish) 🌙\n"
         f"<code>/tagall</code> — General tag, all members {te('fire','🔥')}\n"
-        f"<code>/jtag</code>   — <b>Joke</b> tag, all members 😂\n\n"
+        f"<code>/jtag</code>   — <b>Joke</b> tag, all members 😂\n"
+        f"<code>/vctag</code>  — <b>VC Invite</b> tag 🎙️ Online members first!\n\n"
         f"{te('target','🎯')} <b>Mention Commands</b>\n\n"
         f"<code>/admin</code> or <code>@admin</code> — Tag <b>only admins</b> (6 per msg)\n"
         f"<code>/all</code>   or <code>@all</code>   — Tag <b>all members</b> (6 per msg)\n"
