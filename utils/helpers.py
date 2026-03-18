@@ -9,6 +9,7 @@ Fixed:
 
 import asyncio
 import logging
+import random
 from functools import wraps
 from typing import AsyncGenerator, Optional, Tuple
 
@@ -138,25 +139,67 @@ def owner_only(func):
 
 # ── Fetch all group members (non-bot) ────────────────────────────────────────
 
+# ── Status priority for smart ordering ───────────────────────────────────────
+# ONLINE=0 (best), RECENTLY=1, LAST_WEEK=2, LAST_MONTH/LONG_AGO = skip
+_STATUS_PRIORITY = {}
+try:
+    from pyrogram.enums import UserStatus
+    _STATUS_PRIORITY = {
+        UserStatus.ONLINE:     0,
+        UserStatus.RECENTLY:   1,
+        UserStatus.LAST_WEEK:  2,
+        # LAST_MONTH and LONG_AGO are skipped — not included in tagging
+    }
+    _SKIP_STATUSES = {UserStatus.LAST_MONTH, UserStatus.LONG_AGO}
+except Exception:
+    _STATUS_PRIORITY = {}
+    _SKIP_STATUSES   = set()
+
+
 async def get_members(
     client: Client, chat_id: int
-) -> AsyncGenerator[Tuple[int, str], None]:
+) -> list:
     """
-    Async generator – yields (user_id, first_name) for every non-bot member.
-    Handles FloodWait internally.
+    Fetch all non-bot members and return them sorted by online status:
+      1. Online now
+      2. Recently online
+      3. Last seen within a week
+      (Last month / long ago / unknown → skipped entirely)
+
+    Returns a plain list of (user_id, first_name) tuples.
     """
+    buckets: dict = {0: [], 1: [], 2: [], 3: []}   # 3 = unknown/no status
+
     try:
         async for member in client.get_chat_members(chat_id):
             u = member.user
-            if u and not u.is_bot and not u.is_deleted:
-                yield u.id, (u.first_name or "User")
+            if not u or u.is_bot or u.is_deleted:
+                continue
+
+            status = getattr(u, "status", None)
+
+            # Skip members who haven't been seen in a long time
+            if _SKIP_STATUSES and status in _SKIP_STATUSES:
+                continue
+
+            priority = _STATUS_PRIORITY.get(status, 3) if _STATUS_PRIORITY else 3
+            buckets[priority].append((u.id, u.first_name or "User"))
+
     except FloodWait as e:
-        log.warning("FloodWait %ds while fetching members of %s", e.value, chat_id)
+        log.warning("FloodWait %ds fetching members of %s", e.value, chat_id)
         await asyncio.sleep(e.value + 2)
     except RPCError as e:
         log.error("RPCError fetching members of %s: %s", chat_id, e)
     except Exception as e:
         log.error("Unexpected error fetching members of %s: %s", chat_id, e)
+
+    # Merge buckets in priority order; shuffle within each bucket for variety
+    result = []
+    for key in sorted(buckets):
+        bucket = buckets[key]
+        random.shuffle(bucket)
+        result.extend(bucket)
+    return result
 
 
 # ── Fetch admin members only ──────────────────────────────────────────────────
