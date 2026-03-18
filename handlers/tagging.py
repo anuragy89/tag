@@ -133,9 +133,7 @@ async def _generic_tagger(
         f"⏳ **{type_label} initialising…**\n\nCollecting members — please wait."
     )
 
-    members: list = []
-    async for uid, name in get_members(client, chat.id):
-        members.append((uid, name))
+    members = await get_members(client, chat.id)
 
     if not members:
         await progress_msg.edit_text(
@@ -282,9 +280,7 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
         "⏳ **Collecting members…** Please wait."
     )
 
-    members: list = []
-    async for uid, name in get_members(client, chat.id):
-        members.append((uid, name))
+    members = await get_members(client, chat.id)
 
     if not members:
         await progress_msg.edit_text(f"{te('cross','❌')} No members found.")
@@ -346,4 +342,101 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
         tag_manager.stop(chat.id)
 
     task = asyncio.create_task(_all_tag_task())
+    session.task = task
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  9. /vctag  – VC invite, one mention per message, online-first ordering
+# ══════════════════════════════════════════════════════════════════════════════
+
+@admin_only
+async def cmd_vctag(client: Client, message: Message) -> None:
+    chat = message.chat
+    await upsert_group(chat.id, chat.title, getattr(chat, "username", None))
+
+    if tag_manager.is_active(chat.id):
+        await message.reply_text(
+            f"{te('warning','⚠️')} **A tagging session is already running!**\n\n"
+            "Use /stop first, then start /vctag."
+        )
+        return
+
+    progress_msg = await message.reply_text(
+        f"{te('mic','🎙️')} **VC Tag initialising…**\n\n"
+        "Fetching members — online members first! 🔴"
+    )
+
+    # get_members already returns list sorted online → recently → last_week
+    members = await get_members(client, chat.id)
+
+    if not members:
+        await progress_msg.edit_text(
+            f"{te('cross','❌')} No taggable members found."
+        )
+        return
+
+    await progress_msg.edit_text(
+        f"{te('mic','🎙️')} **VC Tag started!** 🔴 LIVE\n\n"
+        f"👥 Members : `{len(members)}`\n"
+        f"🟢 Online first → 🟡 Recently → 🔵 Last week\n"
+        f"{te('lightning','⚡')} Use /pause · /resume · /stop to control."
+    )
+
+    session = tag_manager.start(chat.id)
+
+    async def _vctag_task() -> None:
+        tagged = 0
+        for uid, name in members:
+            await session.wait_if_paused()
+            if session.is_stopped:
+                break
+
+            mention = build_mention(uid, name)
+            # Each message = unique VC invite text + mention (one per msg)
+            vc_msg = get_msg("vctag", mention)
+
+            for _ in range(4):
+                try:
+                    await client.send_message(chat.id, vc_msg)
+                    tagged += 1
+                    break
+                except FloodWait as e:
+                    await asyncio.sleep(e.value + 2)
+                except RPCError as e:
+                    log.error("RPCError vctag uid %s: %s", uid, e)
+                    break
+
+            # Update progress every 10 tags
+            if tagged > 0 and tagged % 10 == 0:
+                try:
+                    await progress_msg.edit_text(
+                        f"{te('mic','🎙️')} **VC Tag in progress…** 🔴\n\n"
+                        f"✅ Invited : `{tagged}` / `{len(members)}`\n"
+                        f"{te('lightning','⚡')} Use /stop or /pause to control."
+                    )
+                except Exception:
+                    pass
+
+            await asyncio.sleep(Config.TAG_DELAY)
+
+        if session.is_stopped:
+            finish = (
+                f"{te('stop','🛑')} **VC Tag stopped!**\n"
+                f"Invited `{tagged}` out of `{len(members)}` members."
+            )
+        else:
+            finish = (
+                f"{te('mic','🎙️')} **VC Tag complete!** 🎉\n\n"
+                f"✅ Invited : `{tagged}` / `{len(members)}`\n"
+                f"{te('fire','🔥')} VC should be lit now! Enjoy!"
+            )
+
+        try:
+            await progress_msg.edit_text(finish)
+        except Exception:
+            await safe_send(client, chat.id, finish)
+
+        tag_manager.stop(chat.id)
+
+    task = asyncio.create_task(_vctag_task())
     session.task = task
