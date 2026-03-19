@@ -22,6 +22,7 @@ from config import Config
 from database import upsert_group
 from utils import (
     admin_only,
+    is_bot_admin,
     get_members,
     get_admin_members,
     safe_send,
@@ -127,6 +128,17 @@ async def _generic_tagger(
     type_label: str) -> None:
     chat = message.chat
     await upsert_group(chat.id, chat.title, getattr(chat, "username", None))
+
+    # ── Bot admin check ───────────────────────────────────────────────────────
+    if not await is_bot_admin(client, chat.id):
+        await message.reply_text(
+            f"{te('crown','👑')} <b>Make me Admin first!</b>\n\n"
+            f"I need to be a <b>group admin</b> to tag members.\n\n"
+            f"➤ Go to <b>Group Settings → Administrators → Add Admin</b>\n"
+            f"   and add me, then try again! {te('sparkle','✨')}",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
 
     if tag_manager.is_active(chat.id):
         await message.reply_text(
@@ -291,6 +303,17 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
     parts  = raw.strip().split(maxsplit=1)
     custom = parts[1].strip() if len(parts) > 1 else ""
 
+    # ── Bot admin check ───────────────────────────────────────────────────────
+    if not await is_bot_admin(client, chat.id):
+        await message.reply_text(
+            f"{te('crown','👑')} <b>Make me Admin first!</b>\n\n"
+            f"I need to be a <b>group admin</b> to tag members.\n\n"
+            f"➤ Go to <b>Group Settings → Administrators → Add Admin</b>\n"
+            f"   and add me, then try again! {te('sparkle','✨')}",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
     if tag_manager.is_active(chat.id):
         await message.reply_text(
             "⚠️ **Another tagging session is active.**\n\nUse /stop first."
@@ -384,6 +407,18 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
 async def cmd_vctag(client: Client, message: Message) -> None:
     chat = message.chat
     await upsert_group(chat.id, chat.title, getattr(chat, "username", None))
+
+    # ── Bot admin check ───────────────────────────────────────────────────────
+    if not await is_bot_admin(client, chat.id):
+        await message.reply_text(
+            f"{te('crown','👑')} <b>Make me Admin first!</b>\n\n"
+            f"I need to be a <b>group admin</b> to tag members.\n\n"
+            f"➤ Go to <b>Group Settings → Administrators → Add Admin</b>\n"
+            f"   and add me, then try again! {te('sparkle','✨')}",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return
+
 
     if tag_manager.is_active(chat.id):
         await message.reply_text(
