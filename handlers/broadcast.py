@@ -1,11 +1,11 @@
 """
-handlers/broadcast.py – /broadcast and /stats with premium emoji HTML messages.
+handlers/broadcast.py – /broadcast and /stats
 """
 
 import asyncio
 import logging
 
-from pyrogram import Client
+from pyrogram import Client, enums
 from pyrogram.errors import (
     ChannelInvalid, ChannelPrivate, ChatAdminRequired,
     ChatWriteForbidden, FloodWait, InputUserDeactivated,
@@ -16,165 +16,207 @@ from pyrogram.types import Message
 from database import get_all_user_ids, get_all_chat_ids, count_users, count_groups
 from utils import owner_only
 from utils.tag_manager import tag_manager
-from utils.botapi import reply_html, send_html, te
+from utils.botapi import te, _call
 
 log = logging.getLogger(__name__)
 
-_SKIP_ERRORS = (
+_SKIP = (
     UserIsBlocked, InputUserDeactivated, PeerIdInvalid,
     ChannelInvalid, ChannelPrivate, ChatWriteForbidden,
     ChatAdminRequired, UserNotParticipant,
 )
 
 
-async def _forward_one(client, target_id, source_msg, plain_text) -> str:
+# ── Send one broadcast message ────────────────────────────────────────────────
+
+async def _send_one(client: Client, target_id: int,
+                    source_msg, plain_text: str) -> str:
+    """Returns 'ok', 'blocked', or 'failed'."""
     for attempt in range(3):
         try:
-            if source_msg is not None:
+            if source_msg:
                 await source_msg.copy(target_id)
             else:
                 await client.send_message(
                     target_id,
                     f"📢 **Broadcast from Bot Owner:**\n\n{plain_text}",
+                    parse_mode=enums.ParseMode.MARKDOWN,
                 )
             return "ok"
         except FloodWait as e:
+            log.warning("FloodWait %ds → %s", e.value, target_id)
             await asyncio.sleep(e.value + 3)
-        except _SKIP_ERRORS:
+        except _SKIP:
             return "blocked"
-        except RPCError as e:
+        except (RPCError, Exception) as e:
+            log.debug("Send failed attempt %d to %s: %s", attempt + 1, target_id, e)
             if attempt < 2:
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
             else:
                 return "failed"
-        except Exception:
-            return "failed"
     return "failed"
 
 
+# ── Edit the status message via Bot API HTTP ──────────────────────────────────
+
+async def _edit_status(chat_id: int, msg_id: int, text: str) -> None:
+    try:
+        await _call("editMessageText", {
+            "chat_id":                  chat_id,
+            "message_id":               msg_id,
+            "text":                     text,
+            "parse_mode":               "HTML",
+            "disable_web_page_preview": True,
+        })
+    except Exception:
+        pass  # status edit failures are non-critical
+
+
+# ── /broadcast ────────────────────────────────────────────────────────────────
+
 @owner_only
 async def cmd_broadcast(client: Client, message: Message) -> None:
-    raw   = (message.text or "").strip()
-    parts = raw.split(maxsplit=1)
+    raw        = (message.text or "").strip()
+    parts      = raw.split(maxsplit=1)
     plain_text = parts[1].strip() if len(parts) > 1 else ""
-    source_msg = message.reply_to_message
+    source_msg = message.reply_to_message  # None if not a reply
 
-    if source_msg is None and not plain_text:
-        text = (
-            f"{te('bell','🔔')} <b>How to use /broadcast:</b>\n\n"
-            f"<b>Text:</b> <code>/broadcast Hello everyone!</code>\n\n"
-            f"<b>Any media:</b> Reply to a photo/video/audio/doc/sticker "
-            f"with <code>/broadcast</code>\n\n"
-            f"<i>Groups receive it first, then user DMs.</i>"
+    # ── Validate ──────────────────────────────────────────────────────────────
+    if not source_msg and not plain_text:
+        await message.reply_text(
+            f"{te('bell','🔔')} **How to use /broadcast:**\n\n"
+            f"**Text:** `/broadcast Hello everyone!`\n\n"
+            f"**Any media:** Reply to a photo/video/audio/doc/sticker "
+            f"with `/broadcast`\n\n"
+            f"_Groups first, then user DMs._",
+            parse_mode=enums.ParseMode.MARKDOWN,
         )
-        result = await reply_html(message.chat.id, message.id, text)
-        if not result:
-            await message.reply_text(text)
         return
 
+    # ── Content type label ────────────────────────────────────────────────────
     if source_msg:
         m = source_msg
-        if m.photo:        ctype = f"photo 📷"
-        elif m.video:      ctype = f"video 🎬"
-        elif m.audio:      ctype = f"audio 🎵"
-        elif m.voice:      ctype = f"voice 🎤"
-        elif m.document:   ctype = f"document 📄"
-        elif m.sticker:    ctype = f"sticker 🎭"
-        elif m.animation:  ctype = f"GIF 🎞️"
-        else:              ctype = f"text 📝"
+        if   m.photo:      ctype = "photo 📷"
+        elif m.video:      ctype = "video 🎬"
+        elif m.audio:      ctype = "audio 🎵"
+        elif m.voice:      ctype = "voice 🎤"
+        elif m.document:   ctype = "document 📄"
+        elif m.sticker:    ctype = "sticker 🎭"
+        elif m.animation:  ctype = "GIF 🎞️"
+        else:              ctype = "text 📝"
     else:
         ctype = "text 📝"
 
+    # ── Fetch targets ─────────────────────────────────────────────────────────
     chat_ids = await get_all_chat_ids()
     user_ids = await get_all_user_ids()
-    total_g, total_u = len(chat_ids), len(user_ids)
+    total_g  = len(chat_ids)
+    total_u  = len(user_ids)
+    total    = total_g + total_u
 
-    start_text = (
+    # ── Send "Started" status message ─────────────────────────────────────────
+    started_text = (
         f"{te('broadcast','📡')} <b>Broadcast Started!</b>\n\n"
         f"📦 Type   : <code>{ctype}</code>\n"
         f"{te('chat','💬')} Groups : <code>{total_g}</code>\n"
         f"{te('people','👥')} Users  : <code>{total_u}</code>\n"
-        f"📊 Total  : <code>{total_g + total_u}</code>\n\n"
+        f"📊 Total  : <code>{total}</code>\n\n"
         f"<i>Sending to groups first, then DMs…</i>"
     )
-    result = await reply_html(message.chat.id, message.id, start_text)
-    if not result:
-        status_msg = await message.reply_text(start_text)
-        status_chat_id = None   # can't edit fallback easily
-    else:
+
+    # Send via Bot API HTTP so HTML + premium emoji renders
+    sent = await _call("sendMessage", {
+        "chat_id":                  message.chat.id,
+        "reply_to_message_id":      message.id,
+        "text":                     started_text,
+        "parse_mode":               "HTML",
+        "disable_web_page_preview": True,
+    })
+
+    # Store msg_id for live edits
+    if sent and isinstance(sent, dict) and "message_id" in sent:
         status_chat_id = message.chat.id
-        status_msg_id  = result["message_id"]
+        status_msg_id  = sent["message_id"]
+        can_edit = True
+    else:
+        # Fallback — plain reply via pyrogram
+        fallback = await message.reply_text(
+            f"📡 **Broadcast Started!** | Groups: {total_g} | Users: {total_u}",
+            parse_mode=enums.ParseMode.MARKDOWN,
+        )
+        status_chat_id = message.chat.id
+        status_msg_id  = fallback.id
+        can_edit = True
 
     # ── Phase 1: Groups ───────────────────────────────────────────────────────
     g_ok = g_blocked = g_failed = 0
-    for i, chat_id in enumerate(chat_ids, 1):
-        res = await _forward_one(client, chat_id, source_msg, plain_text)
-        if res == "ok":       g_ok += 1
-        elif res == "blocked": g_blocked += 1
-        else:                 g_failed += 1
 
-        if (i % 20 == 0 or i == total_g) and status_chat_id:
-            update = (
+    for idx, chat_id in enumerate(chat_ids, 1):
+        res = await _send_one(client, chat_id, source_msg, plain_text)
+        if   res == "ok":      g_ok += 1
+        elif res == "blocked": g_blocked += 1
+        else:                  g_failed += 1
+
+        if can_edit and (idx % 20 == 0 or idx == total_g):
+            await _edit_status(status_chat_id, status_msg_id, (
                 f"{te('broadcast','📡')} <b>Broadcasting to Groups…</b>\n\n"
-                f"{te('chat','💬')} Progress : <code>{i}</code> / <code>{total_g}</code>\n"
+                f"{te('chat','💬')} Progress : <code>{idx}</code> / <code>{total_g}</code>\n"
                 f"{te('check','✅')} Sent     : <code>{g_ok}</code>\n"
                 f"🚫 Blocked  : <code>{g_blocked}</code>\n"
                 f"{te('cross','❌')} Failed   : <code>{g_failed}</code>\n\n"
                 f"<i>User DMs start after groups…</i>"
-            )
-            await _edit(status_chat_id, status_msg_id, update)
-        await asyncio.sleep(0.3)
+            ))
+
+        await asyncio.sleep(0.35)
 
     # ── Phase 2: User DMs ─────────────────────────────────────────────────────
     u_ok = u_blocked = u_failed = 0
-    for i, user_id in enumerate(user_ids, 1):
-        res = await _forward_one(client, user_id, source_msg, plain_text)
-        if res == "ok":       u_ok += 1
-        elif res == "blocked": u_blocked += 1
-        else:                 u_failed += 1
 
-        if (i % 20 == 0 or i == total_u) and status_chat_id:
-            update = (
+    for idx, user_id in enumerate(user_ids, 1):
+        res = await _send_one(client, user_id, source_msg, plain_text)
+        if   res == "ok":      u_ok += 1
+        elif res == "blocked": u_blocked += 1
+        else:                  u_failed += 1
+
+        if can_edit and (idx % 20 == 0 or idx == total_u):
+            await _edit_status(status_chat_id, status_msg_id, (
                 f"{te('broadcast','📡')} <b>Broadcasting to Users…</b>\n\n"
                 f"{te('check','✅')} Groups done : <code>{g_ok}</code> / <code>{total_g}</code>\n\n"
-                f"{te('people','👥')} Users : <code>{i}</code> / <code>{total_u}</code>\n"
+                f"{te('people','👥')} Users : <code>{idx}</code> / <code>{total_u}</code>\n"
                 f"{te('check','✅')} Sent    : <code>{u_ok}</code>\n"
                 f"🚫 Blocked : <code>{u_blocked}</code>\n"
                 f"{te('cross','❌')} Failed  : <code>{u_failed}</code>"
-            )
-            await _edit(status_chat_id, status_msg_id, update)
-        await asyncio.sleep(0.3)
+            ))
+
+        await asyncio.sleep(0.35)
 
     # ── Final report ──────────────────────────────────────────────────────────
     report = (
         f"{te('check','✅')} <b>Broadcast Complete!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{te('chat','💬')} <b>Groups</b>\n"
-        f"  ├ {te('check','✅')} Delivered : <code>{g_ok}</code> / <code>{total_g}</code>\n"
+        f"  ├ ✅ Delivered : <code>{g_ok}</code> / <code>{total_g}</code>\n"
         f"  ├ 🚫 Blocked  : <code>{g_blocked}</code>\n"
-        f"  └ {te('cross','❌')} Failed   : <code>{g_failed}</code>\n\n"
+        f"  └ ❌ Failed   : <code>{g_failed}</code>\n\n"
         f"{te('people','👥')} <b>Users (DM)</b>\n"
-        f"  ├ {te('check','✅')} Delivered : <code>{u_ok}</code> / <code>{total_u}</code>\n"
+        f"  ├ ✅ Delivered : <code>{u_ok}</code> / <code>{total_u}</code>\n"
         f"  ├ 🚫 Blocked  : <code>{u_blocked}</code>\n"
-        f"  └ {te('cross','❌')} Failed   : <code>{u_failed}</code>\n\n"
-        f"📊 <b>Total Delivered : <code>{g_ok+u_ok}</code> / <code>{total_g+total_u}</code></b>\n"
+        f"  └ ❌ Failed   : <code>{u_failed}</code>\n\n"
+        f"📊 <b>Total Delivered : <code>{g_ok + u_ok}</code> / <code>{total}</code></b>\n"
         f"📦 Type : <code>{ctype}</code>"
     )
-    if status_chat_id:
-        await _edit(status_chat_id, status_msg_id, report)
+
+    if can_edit:
+        await _edit_status(status_chat_id, status_msg_id, report)
     else:
-        await send_html(message.chat.id, report)
+        await _call("sendMessage", {
+            "chat_id":    message.chat.id,
+            "text":       report,
+            "parse_mode": "HTML",
+        })
 
 
-async def _edit(chat_id: int, message_id: int, text: str):
-    """Edit a message via Bot API HTTP (HTML)."""
-    from utils.botapi import _call
-    await _call("editMessageText", {
-        "chat_id": chat_id, "message_id": message_id,
-        "text": text, "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    })
-
+# ── /stats ────────────────────────────────────────────────────────────────────
 
 @owner_only
 async def cmd_stats(client: Client, message: Message) -> None:
@@ -191,8 +233,18 @@ async def cmd_stats(client: Client, message: Message) -> None:
         f"{te('chat','💬')} <b>Total Groups :</b> <code>{total_groups}</code>\n"
         f"{te('lightning','⚡')} <b>Active Tags  :</b> <code>{active_tags}</code>\n\n"
         f"🗄️ <b>Database :</b> MongoDB\n"
-        f"{te('robot','🤖')} <i>Tag Master Bot — Online &amp; Running!</i> {te('rocket','🚀')}"
+        f"{te('robot','🤖')} <i>Tag Master Bot — Online &amp; Running!</i> "
+        f"{te('rocket','🚀')}"
     )
-    result = await reply_html(message.chat.id, message.id, text)
-    if not result:
-        await message.reply_text(text)
+    sent = await _call("sendMessage", {
+        "chat_id":                  message.chat.id,
+        "reply_to_message_id":      message.id,
+        "text":                     text,
+        "parse_mode":               "HTML",
+        "disable_web_page_preview": True,
+    })
+    if not sent:
+        await message.reply_text(
+            f"📊 **Stats** | Users: {total_users} | Groups: {total_groups}",
+            parse_mode=enums.ParseMode.MARKDOWN,
+        )
