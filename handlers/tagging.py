@@ -139,7 +139,7 @@ async def _generic_tagger(
 
     progress_msg = await message.reply_text(
         
-        f"⏳ **{type_label} initialising…**\n\nCollecting members — please wait."
+        f"⏳ <b>{type_label} starting…</b> Please wait."
     ,
         parse_mode=enums.ParseMode.HTML,
     )
@@ -158,9 +158,8 @@ async def _generic_tagger(
 
     await progress_msg.edit_text(
         
-        f"{te('rocket','🚀')} **{type_label} started!**\n\n"
-        f"👥 Members found : `{len(members)}`\n"
-        f"{te('lightning','⚡')} Use /pause · /resume · /stop to control."
+        f"{te('rocket','🚀')} <b>{type_label} is LIVE!</b>\n\n"
+        f"Use /pause · /resume · /stop to control."
     ,
         parse_mode=enums.ParseMode.HTML,
     )
@@ -315,9 +314,8 @@ async def cmd_all_tag(client: Client, message: Message) -> None:
 
     await progress_msg.edit_text(
         
-        f"🚀 **All-Tag started!**\n\n"
-        f"👥 Members found : `{len(members)}`\n"
-        f"⏸️ Use /pause · /resume · /stop to control."
+        f"{te('rocket','🚀')} <b>All-Tag is LIVE!</b>\n\n"
+        f"Use /pause · /resume · /stop to control."
     ,
         parse_mode=enums.ParseMode.HTML,
     )
@@ -398,8 +396,7 @@ async def cmd_vctag(client: Client, message: Message) -> None:
 
     progress_msg = await message.reply_text(
         
-        f"{te('mic','🎙️')} **VC Tag initialising…**\n\n"
-        "Fetching members — online members first! 🔴"
+        f"{te('mic','🎙️')} <b>VC Tag starting…</b> Please wait."
     ,
         parse_mode=enums.ParseMode.HTML,
     )
@@ -418,10 +415,8 @@ async def cmd_vctag(client: Client, message: Message) -> None:
 
     await progress_msg.edit_text(
         
-        f"{te('mic','🎙️')} **VC Tag started!** 🔴 LIVE\n\n"
-        f"👥 Members : `{len(members)}`\n"
-        f"🟢 Online first → 🟡 Recently → 🔵 Last week\n"
-        f"{te('lightning','⚡')} Use /pause · /resume · /stop to control."
+        f"{te('mic','🎙️')} <b>VC Tag is LIVE!</b> 🔴\n\n"
+        f"Use /pause · /resume · /stop to control."
     ,
         parse_mode=enums.ParseMode.HTML,
     )
@@ -439,9 +434,15 @@ async def cmd_vctag(client: Client, message: Message) -> None:
             # Each message = unique VC invite text + mention (one per msg)
             vc_msg = get_msg("vctag", mention)
 
+            # Wrap vc_msg with HTML — prepend premium mic emoji, send as HTML
+            html_vc_msg = f"{te('mic','🎙️')} {vc_msg}"
+
             for _ in range(4):
                 try:
-                    await client.send_message(chat.id, vc_msg)
+                    await client.send_message(
+                        chat.id, html_vc_msg,
+                        parse_mode=enums.ParseMode.HTML,
+                    )
                     tagged += 1
                     break
                 except FloodWait as e:
@@ -455,9 +456,8 @@ async def cmd_vctag(client: Client, message: Message) -> None:
                 try:
                     await progress_msg.edit_text(
                         
-                        f"{te('mic','🎙️')} **VC Tag in progress…** 🔴\n\n"
-                        f"✅ Invited : `{tagged}` / `{len(members)}`\n"
-                        f"{te('lightning','⚡')} Use /stop or /pause to control."
+                        f"{te('mic','🎙️')} <b>VC Tag in progress…</b> 🔴\n"
+                        f"Use /stop or /pause to control."
                     ,
                         parse_mode=enums.ParseMode.HTML,
                     )
