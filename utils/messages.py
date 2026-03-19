@@ -359,10 +359,10 @@ JTAG_MSGS = [
 #  Static tag wrappers
 # ══════════════════════════════════════════════════════════════════════════════
 ADMIN_TAG_PREFIX = "📢 **Admin Alert!** Calling all admins:\n\n"
-ADMIN_TAG_SUFFIX = "\n\n⚠️ _Please attend to the matter above._"
+ADMIN_TAG_SUFFIX = "\n\n"
 
-ALL_TAG_PREFIX   = "📣 **Attention Everyone!**\n\n"
-ALL_TAG_SUFFIX   = "\n\n👆 _Please check the message above!_"
+ALL_TAG_PREFIX   = "\n\n"
+ALL_TAG_SUFFIX   = "\n\n"
 
 
 def GROUP_JOIN_MSG(chat_title: str) -> str:
