@@ -26,6 +26,7 @@ from utils import (
     get_admin_members,
     safe_send,
     build_mention,
+    build_mention_html,
     get_msg,
     ADMIN_TAG_PREFIX,
     ADMIN_TAG_SUFFIX,
@@ -430,8 +431,8 @@ async def cmd_vctag(client: Client, message: Message) -> None:
             if session.is_stopped:
                 break
 
-            mention = build_mention(uid, name)
-            # Each message = unique VC invite text + mention (one per msg)
+            mention = build_mention_html(uid, name)
+            # Each message = unique VC invite text + HTML mention (one per msg)
             vc_msg = get_msg("vctag", mention)
 
             # Wrap vc_msg with HTML — prepend premium mic emoji, send as HTML
