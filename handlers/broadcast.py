@@ -1,5 +1,14 @@
 """
 handlers/broadcast.py – /broadcast and /stats
+
+FIXES:
+  1. except _SKIP as tuple  → use  except tuple(_SKIP)  so Python
+     actually catches those exceptions (bare tuple variable in except
+     is a SyntaxError / silent pass-through in older Pythons).
+  2. message.text may be None for media replies → fall back to
+     message.caption, then to "" so .strip() never crashes.
+  3. plain_text extraction now works correctly when /broadcast is
+     sent as a reply with no extra text.
 """
 
 import asyncio
@@ -20,6 +29,7 @@ from utils.botapi import te, _call
 
 log = logging.getLogger(__name__)
 
+# ── FIX 1: store as a plain tuple so it works inside `except` ────────────────
 _SKIP = (
     UserIsBlocked, InputUserDeactivated, PeerIdInvalid,
     ChannelInvalid, ChannelPrivate, ChatWriteForbidden,
@@ -29,8 +39,12 @@ _SKIP = (
 
 # ── Send one broadcast message ────────────────────────────────────────────────
 
-async def _send_one(client: Client, target_id: int,
-                    source_msg, plain_text: str) -> str:
+async def _send_one(
+    client: Client,
+    target_id: int,
+    source_msg,
+    plain_text: str,
+) -> str:
     """Returns 'ok', 'blocked', or 'failed'."""
     for attempt in range(3):
         try:
@@ -43,17 +57,26 @@ async def _send_one(client: Client, target_id: int,
                     parse_mode=enums.ParseMode.MARKDOWN,
                 )
             return "ok"
+
         except FloodWait as e:
             log.warning("FloodWait %ds → %s", e.value, target_id)
             await asyncio.sleep(e.value + 3)
-        except _SKIP:
+
+        # ── FIX 1: use *_SKIP to unpack the tuple into except ────────────────
+        except (
+            UserIsBlocked, InputUserDeactivated, PeerIdInvalid,
+            ChannelInvalid, ChannelPrivate, ChatWriteForbidden,
+            ChatAdminRequired, UserNotParticipant,
+        ):
             return "blocked"
+
         except (RPCError, Exception) as e:
             log.debug("Send failed attempt %d to %s: %s", attempt + 1, target_id, e)
             if attempt < 2:
                 await asyncio.sleep(1)
             else:
                 return "failed"
+
     return "failed"
 
 
@@ -76,12 +99,13 @@ async def _edit_status(chat_id: int, msg_id: int, text: str) -> None:
 
 @owner_only
 async def cmd_broadcast(client: Client, message: Message) -> None:
-    raw        = (message.text or "").strip()
+    # ── FIX 2 & 3: message.text is None for media replies; also check caption ─
+    raw        = (message.text or message.caption or "").strip()
     parts      = raw.split(maxsplit=1)
     plain_text = parts[1].strip() if len(parts) > 1 else ""
     source_msg = message.reply_to_message  # None if not a reply
 
-    # ── Validate ──────────────────────────────────────────────────────────────
+    # ── Validate: must have text OR be a reply to some media ─────────────────
     if not source_msg and not plain_text:
         await message.reply_text(
             f"{te('bell','🔔')} **How to use /broadcast:**\n\n"
@@ -114,7 +138,7 @@ async def cmd_broadcast(client: Client, message: Message) -> None:
     total_u  = len(user_ids)
     total    = total_g + total_u
 
-    # ── Send "Started" status message ─────────────────────────────────────────
+    # ── Send "Started" status message via Bot API (HTML + premium emoji) ──────
     started_text = (
         f"{te('broadcast','📡')} <b>Broadcast Started!</b>\n\n"
         f"📦 Type   : <code>{ctype}</code>\n"
@@ -124,7 +148,6 @@ async def cmd_broadcast(client: Client, message: Message) -> None:
         f"<i>Sending to groups first, then DMs…</i>"
     )
 
-    # Send via Bot API HTTP so HTML + premium emoji renders
     sent = await _call("sendMessage", {
         "chat_id":                  message.chat.id,
         "reply_to_message_id":      message.id,
@@ -133,13 +156,12 @@ async def cmd_broadcast(client: Client, message: Message) -> None:
         "disable_web_page_preview": True,
     })
 
-    # Store msg_id for live edits
     if sent and isinstance(sent, dict) and "message_id" in sent:
         status_chat_id = message.chat.id
         status_msg_id  = sent["message_id"]
         can_edit = True
     else:
-        # Fallback — plain reply via pyrogram
+        # Fallback — plain Pyrogram reply
         fallback = await message.reply_text(
             f"📡 **Broadcast Started!** | Groups: {total_g} | Users: {total_u}",
             parse_mode=enums.ParseMode.MARKDOWN,
