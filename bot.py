@@ -81,7 +81,7 @@ async def main() -> None:
     )
     from handlers.control import cmd_stop, cmd_pause, cmd_resume
     from handlers.broadcast import cmd_broadcast, cmd_stats
-    from handlers.vc_notify import register_vc_handlers
+    from handlers.vc_notify import register_vc_handlers, startup_vc_scan
 
     # ── 4. Register all handlers ──────────────────────────────────────────────
     G = filters.group
@@ -156,6 +156,9 @@ async def main() -> None:
     me = await app.get_me()
     log.info("✅ Logged in as @%s  (ID: %s)", me.username, me.id)
     log.info("🏷️  Tag Master Bot is LIVE — waiting for messages.")
+
+    # Scan all known groups for already-active VCs (handles bot restart mid-VC)
+    asyncio.create_task(startup_vc_scan(app))
 
     # ── 6. Block until SIGTERM / SIGINT ──────────────────────────────────────
     # asyncio.Future() blocks forever unless explicitly cancelled.
