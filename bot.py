@@ -81,6 +81,7 @@ async def main() -> None:
     )
     from handlers.control import cmd_stop, cmd_pause, cmd_resume
     from handlers.broadcast import cmd_broadcast, cmd_stats
+    from handlers.vc_notify import register_vc_handlers
 
     # ── 4. Register all handlers ──────────────────────────────────────────────
     G = filters.group
@@ -129,6 +130,9 @@ async def main() -> None:
     # Owner commands — work everywhere
     app.add_handler(MessageHandler(cmd_broadcast, filters.command("broadcast")))
     app.add_handler(MessageHandler(cmd_stats,     filters.command("stats")))
+
+    # VC join notifier — auto-deleting message when someone joins voice chat
+    register_vc_handlers(app)
 
     # Passive tracker — records every user/group silently to MongoDB
     @app.on_message(filters.group & ~filters.bot)
