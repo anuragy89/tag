@@ -172,7 +172,7 @@ def register_vc_handlers(app: Client) -> None:
     app.add_handler(
         MessageHandler(
             on_vc_members_invited,
-            filters.voice_chat_members_invited & filters.group,
+            filters.video_chat_members_invited & filters.group,
         )
     )
     app.add_handler(RawUpdateHandler(on_raw_vc_update))
