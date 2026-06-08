@@ -158,7 +158,7 @@ async def main() -> None:
     log.info("🏷️  Tag Master Bot is LIVE — waiting for messages.")
 
     # Scan all known groups for already-active VCs (handles bot restart mid-VC)
-    asyncio.create_task(startup_vc_scan(app))
+    await startup_vc_scan(app)
 
     # ── 6. Block until SIGTERM / SIGINT ──────────────────────────────────────
     # asyncio.Future() blocks forever unless explicitly cancelled.
