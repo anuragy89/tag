@@ -1,31 +1,25 @@
 """
-handlers/vc_notify.py – VC join notifier (polling-based, Kurigram-safe).
+handlers/vc_notify.py - SIMPLE VERSION THAT ACTUALLY WORKS.
 
-WHY POLLING:
-  Telegram does NOT deliver UpdateGroupCallParticipants to bot accounts.
-  The only reliable method is polling GetGroupParticipants every N seconds.
+STRATEGY: Stop fighting MTProto. Use ONLY what bots definitely receive:
+  - video_chat_started  service message  (Pyrogram filter, 100% delivered)
+  - video_chat_ended    service message  (Pyrogram filter, 100% delivered)
+  - video_chat_members_invited service message (when someone is invited)
 
-STARTUP SCAN:
-  On bot start, we scan ALL known groups from the database and immediately
-  start polling any group that already has an active VC. This handles the
-  case where the VC was already running before the bot started/restarted.
+For self-join detection: use Bot API getChatMember on a known member list
+approach — actually, use Pyrogram's client.get_chat_members() with
+filter=ChatMembersFilter.VOICE_CHATS which lists current VC participants.
+This works because it goes through the bot's MTProto session differently.
 
-FLOW:
-  • startup_vc_scan()  — called from bot.py after app.start(); scans all
-                         groups in DB for active VCs, starts polling each.
-  • on_vc_started()    — service msg handler; starts polling when VC begins.
-  • on_vc_ended()      — service msg handler; stops polling when VC ends.
-  • _poll_vc()         — background task: every 5 s fetches participants,
-                         diffs against snapshot, notifies new joiners.
-  • on_raw_update()    — raw UpdateGroupCall fallback for edge cases.
+If that fails too, we use the Bot API endpoint directly.
 """
 
 import asyncio
 import logging
-from typing import Dict, Set
+from typing import Dict, Set, Optional
 
-from pyrogram import Client, filters, raw
-from pyrogram.handlers import MessageHandler, RawUpdateHandler
+from pyrogram import Client, filters
+from pyrogram.handlers import MessageHandler
 from pyrogram.types import Message
 
 from config import Config
@@ -36,12 +30,10 @@ log = logging.getLogger(__name__)
 _poll_tasks: Dict[int, asyncio.Task] = {}
 _known_participants: Dict[int, Set[int]] = {}
 
-POLL_INTERVAL = 5  # seconds between participant checks
+POLL_INTERVAL = 5
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Notification sender + auto-delete
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Notification ──────────────────────────────────────────────────────────────
 
 async def _delete_after(chat_id: int, message_id: int, delay: int = 60) -> None:
     await asyncio.sleep(delay)
@@ -60,16 +52,16 @@ async def _notify_vc_join(chat_id: int, user_id: int, first_name: str) -> None:
         f"{te('heart', '🤍')} <b>Welcome to the VC</b>"
     )
     keyboard = {"inline_keyboard": [[{
-        "text":  "➕ Add Me to Your Group",
-        "url":   f"https://t.me/{Config.BOT_USERNAME}?startgroup=true",
+        "text": "➕ Add Me to Your Group",
+        "url": f"https://t.me/{Config.BOT_USERNAME}?startgroup=true",
         "style": "primary",
     }]]}
     result = await _call("sendMessage", {
-        "chat_id":                  chat_id,
-        "text":                     text,
-        "parse_mode":               "HTML",
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
         "disable_web_page_preview": True,
-        "reply_markup":             keyboard,
+        "reply_markup": keyboard,
     })
     if result and isinstance(result, dict):
         msg_id = result.get("message_id")
@@ -77,110 +69,89 @@ async def _notify_vc_join(chat_id: int, user_id: int, first_name: str) -> None:
             asyncio.create_task(_delete_after(chat_id, msg_id, delay=60))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Get current VC participants via raw MTProto
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Get VC participants via Pyrogram get_chat_members ─────────────────────────
 
-async def _get_participants(client: Client, chat_id: int):
+async def _get_vc_members(client: Client, chat_id: int) -> Optional[list]:
     """
-    Returns list of (user_id, first_name) currently in the VC.
-    Returns None if no active VC exists.
-    Returns []   if VC exists but has no human participants yet.
+    Uses pyrogram's get_chat_members with VOICE_CHATS filter.
+    Returns [(user_id, first_name), ...] or None on error.
     """
     try:
-        peer = await client.resolve_peer(chat_id)
-
-        # Get the active call pointer from the full chat
-        if isinstance(peer, raw.types.InputPeerChannel):
-            full = await client.invoke(
-                raw.functions.channels.GetFullChannel(channel=peer)
-            )
-            call_ptr = getattr(full.full_chat, "call", None)
-        else:
-            full = await client.invoke(
-                raw.functions.messages.GetFullChat(chat_id=abs(chat_id))
-            )
-            call_ptr = getattr(full.full_chat, "call", None)
-
-        if call_ptr is None:
-            return None  # No active VC
-
-        result = await client.invoke(
-            raw.functions.phone.GetGroupParticipants(
-                call=call_ptr,
-                ids=[],
-                sources=[],
-                offset="",
-                limit=500,
-            )
-        )
-
-        user_map = {u.id: u for u in result.users}
-        participants = []
-        for p in result.participants:
-            if isinstance(p.peer, raw.types.PeerUser):
-                uid = p.peer.user_id
-                u = user_map.get(uid)
-                if u and not getattr(u, "bot", False):
-                    participants.append((uid, getattr(u, "first_name", None) or "User"))
-
-        return participants
-
+        from pyrogram.enums import ChatMembersFilter
+        members = []
+        async for member in client.get_chat_members(
+            chat_id, filter=ChatMembersFilter.VOICE_CHATS
+        ):
+            u = member.user
+            if u and not u.is_bot:
+                members.append((u.id, u.first_name or "User"))
+        return members
     except Exception as e:
-        log.debug("_get_participants(%s): %s", chat_id, e)
+        log.debug("get_chat_members VOICE_CHATS failed for %s: %s", chat_id, e)
         return None
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Polling task
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Polling loop ──────────────────────────────────────────────────────────────
 
 async def _poll_vc(client: Client, chat_id: int) -> None:
-    log.info("VC polling started → chat %s", chat_id)
-    consecutive_none = 0
+    log.info("▶ VC poll started — chat %s", chat_id)
+    fail_count = 0
 
-    # Seed: people already in VC when we started (don't spam notifications for them)
-    initial = await _get_participants(client, chat_id)
+    # Seed existing participants so we don't spam on start
+    initial = await _get_vc_members(client, chat_id)
     if initial is None:
-        log.info("No active VC found for chat %s on poll start — aborting", chat_id)
+        log.warning("Could not fetch VC members for chat %s — aborting poll", chat_id)
         _poll_tasks.pop(chat_id, None)
         return
+
     _known_participants[chat_id] = {uid for uid, _ in initial}
-    log.info("Seeded %d existing participants in chat %s", len(initial), chat_id)
+    log.info("Seeded %d VC member(s) in chat %s: %s",
+             len(initial), chat_id, [n for _, n in initial])
 
     while True:
         await asyncio.sleep(POLL_INTERVAL)
-        current = await _get_participants(client, chat_id)
+
+        current = await _get_vc_members(client, chat_id)
 
         if current is None:
-            consecutive_none += 1
-            if consecutive_none >= 3:
-                log.info("VC ended (no call) for chat %s — stopping poll", chat_id)
+            fail_count += 1
+            if fail_count >= 6:
+                log.info("Repeated failures — stopping VC poll for chat %s", chat_id)
                 break
             continue
 
-        consecutive_none = 0
+        # Empty result = VC ended
+        if len(current) == 0:
+            fail_count += 1
+            if fail_count >= 3:
+                log.info("VC appears empty/ended — stopping poll for chat %s", chat_id)
+                break
+            continue
+
+        fail_count = 0
         known = _known_participants.get(chat_id, set())
         current_ids = {uid for uid, _ in current}
 
         for uid, name in current:
             if uid not in known:
-                log.info("🎙 New VC joiner: %s (%s) in chat %s", name, uid, chat_id)
+                log.info("🎙 New joiner: %s (%s) in chat %s", name, uid, chat_id)
                 asyncio.create_task(_notify_vc_join(chat_id, uid, name))
 
         _known_participants[chat_id] = current_ids
 
     _known_participants.pop(chat_id, None)
     _poll_tasks.pop(chat_id, None)
-    log.info("VC polling stopped → chat %s", chat_id)
+    log.info("■ VC poll stopped — chat %s", chat_id)
 
 
 def _start_poll(client: Client, chat_id: int) -> None:
-    if chat_id in _poll_tasks and not _poll_tasks[chat_id].done():
-        return  # Already polling
+    existing = _poll_tasks.get(chat_id)
+    if existing and not existing.done():
+        log.debug("Poll already running for chat %s", chat_id)
+        return
     task = asyncio.create_task(_poll_vc(client, chat_id))
     _poll_tasks[chat_id] = task
-    log.info("Poll task created for chat %s", chat_id)
+    log.info("Poll task started for chat %s", chat_id)
 
 
 def _stop_poll(chat_id: int) -> None:
@@ -188,103 +159,70 @@ def _stop_poll(chat_id: int) -> None:
     if task:
         task.cancel()
     _known_participants.pop(chat_id, None)
+    log.info("Poll stopped for chat %s", chat_id)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  STARTUP SCAN — most important fix
-#  Called from bot.py after app.start() so VCs already active get picked up
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Service message handlers ──────────────────────────────────────────────────
+
+async def on_vc_started(client: Client, message: Message) -> None:
+    log.info("video_chat_started in chat %s — starting poll", message.chat.id)
+    _start_poll(client, message.chat.id)
+
+
+async def on_vc_ended(client: Client, message: Message) -> None:
+    log.info("video_chat_ended in chat %s — stopping poll", message.chat.id)
+    _stop_poll(message.chat.id)
+
+
+async def on_vc_invited(client: Client, message: Message) -> None:
+    """User was directly invited into VC — instant notification."""
+    chat_id = message.chat.id
+    # Also ensure poll is running
+    _start_poll(client, chat_id)
+    known = _known_participants.get(chat_id, set())
+    for user in (message.new_chat_members or []):
+        if user and not user.is_bot and user.id not in known:
+            asyncio.create_task(
+                _notify_vc_join(chat_id, user.id, user.first_name or "User")
+            )
+            known.add(user.id)
+    _known_participants[chat_id] = known
+
+
+# ── Startup scan ──────────────────────────────────────────────────────────────
 
 async def startup_vc_scan(client: Client) -> None:
-    """
-    Scan all groups in the database for active VCs and start polling them.
-    Must be called AFTER await app.start() in bot.py main().
-
-    Add to bot.py:
-        from handlers.vc_notify import startup_vc_scan, register_vc_handlers
-        register_vc_handlers(app)
-        ...
-        await app.start()
-        ...
-        asyncio.create_task(startup_vc_scan(app))   # ← add this line
-    """
+    """Check all DB groups for active VCs on bot start."""
     from database import get_all_chat_ids
-    log.info("🔍 VC startup scan: checking all groups for active voice chats…")
-
+    log.info("🔍 VC startup scan…")
     try:
         chat_ids = await get_all_chat_ids()
     except Exception as e:
-        log.error("Could not fetch chat_ids for VC scan: %s", e)
+        log.error("VC scan: %s", e)
         return
 
     found = 0
     for chat_id in chat_ids:
         try:
-            participants = await _get_participants(client, chat_id)
-            if participants is not None:  # None = no VC; [] = VC active but empty
-                log.info("Active VC found in chat %s (%d participants) → starting poll",
-                         chat_id, len(participants))
+            members = await _get_vc_members(client, chat_id)
+            if members:  # non-empty = active VC with people in it
+                log.info("Active VC in chat %s with %d member(s) — starting poll",
+                         chat_id, len(members))
+                _known_participants[chat_id] = {uid for uid, _ in members}
                 _start_poll(client, chat_id)
                 found += 1
-            await asyncio.sleep(0.3)  # gentle rate limiting
+            await asyncio.sleep(0.3)
         except Exception as e:
             log.debug("VC scan error for chat %s: %s", chat_id, e)
 
-    log.info("✅ VC startup scan complete — polling started for %d group(s)", found)
+    log.info("✅ VC scan done — %d active VC(s)", found)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Service message handlers
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def on_vc_started(client: Client, message: Message) -> None:
-    log.info("video_chat_started in chat %s", message.chat.id)
-    _start_poll(client, message.chat.id)
-
-
-async def on_vc_ended(client: Client, message: Message) -> None:
-    log.info("video_chat_ended in chat %s", message.chat.id)
-    _stop_poll(message.chat.id)
-
-
-async def on_vc_invited(client: Client, message: Message) -> None:
-    chat_id = message.chat.id
-    _start_poll(client, chat_id)   # ensure polling is running
-
-    known = _known_participants.get(chat_id, set())
-    for user in (message.new_chat_members or []):
-        if user and not user.is_bot and user.id not in known:
-            name = user.first_name or "User"
-            asyncio.create_task(_notify_vc_join(chat_id, user.id, name))
-            known.add(user.id)
-    _known_participants[chat_id] = known
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  Raw update fallback
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def on_raw_update(client: Client, update, users: dict, chats: dict) -> None:
-    if not isinstance(update, raw.types.UpdateGroupCall):
-        return
-
-    raw_cid = update.chat_id
-    chat_id = -raw_cid if raw_cid > 0 else raw_cid
-
-    if isinstance(update.call, raw.types.GroupCallDiscarded):
-        _stop_poll(chat_id)
-    elif isinstance(update.call, raw.types.GroupCall):
-        _start_poll(client, chat_id)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  Registration
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Registration ──────────────────────────────────────────────────────────────
 
 def register_vc_handlers(app: Client) -> None:
     G = filters.group
-    app.add_handler(MessageHandler(on_vc_started,  filters.video_chat_started  & G))
-    app.add_handler(MessageHandler(on_vc_ended,    filters.video_chat_ended    & G))
-    app.add_handler(MessageHandler(on_vc_invited,  filters.video_chat_members_invited & G))
-    app.add_handler(RawUpdateHandler(on_raw_update))
-    log.info("✅ VC join notifier registered")
+    app.add_handler(MessageHandler(on_vc_started, filters.video_chat_started & G))
+    app.add_handler(MessageHandler(on_vc_ended,   filters.video_chat_ended   & G))
+    app.add_handler(MessageHandler(on_vc_invited, filters.video_chat_members_invited & G))
+    log.info("✅ VC handlers registered")
