@@ -27,7 +27,7 @@
 
 ## 🚀 Quick Deploy to Heroku
 
-[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/sparrow9616/sparrow9616/song_back2.git)
+[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/sparrow9616/song_back2.git)
 
 **Manual steps:**
 
